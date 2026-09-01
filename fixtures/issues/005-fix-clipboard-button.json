@@ -1,0 +1,10 @@
+{
+  "number": 5,
+  "title": "Fix the broken copy-to-clipboard button",
+  "body": "The 'Copy result' button does nothing on Firefox. Click it and nothing happens; on Chrome it works. Likely the navigator.clipboard.write API needs a fallback for browsers that block it.",
+  "labels": [],
+  "author": "eve",
+  "url": "https://github.com/demo/factory-target/issues/5",
+  "createdAt": "2026-08-30T14:00:00Z",
+  "comments": []
+}

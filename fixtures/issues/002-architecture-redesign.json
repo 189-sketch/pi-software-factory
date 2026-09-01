@@ -1,0 +1,10 @@
+{
+  "number": 2,
+  "title": "Redesign image editing state management",
+  "body": "The current editing state is a tangle of refs and ad-hoc callbacks. We need a spec for a clean state machine that handles upload → prompt → result → follow-up → export. This is a major architecture change that touches multiple components.",
+  "labels": [],
+  "author": "bob",
+  "url": "https://github.com/demo/factory-target/issues/2",
+  "createdAt": "2026-08-30T11:00:00Z",
+  "comments": []
+}

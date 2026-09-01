@@ -1,0 +1,40 @@
+{
+  "name": "factory",
+  "version": "1.0.0",
+  "description": "Multi-agent software factory built on the pi-mono framework.",
+  "type": "module",
+  "bin": {
+    "factory": "dist/cli/run-issue.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsx src/cli/run-issue.ts",
+    "triage": "tsx src/cli/run-issue.ts --all",
+    "issue": "tsx src/cli/run-issue.ts --issue",
+    "webhook": "tsx src/cli/run-issue.ts --webhook 8080",
+    "test": "node --test src/__tests__/*.test.mjs",
+    "validate-review": "node scripts/validate-review.mjs",
+    "annotate-diff": "node scripts/annotate-diff.mjs",
+    "spec-check": "node scripts/spec-check.mjs",
+    "collect-feedback": "node scripts/collect-feedback.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "multi-agent",
+    "factory",
+    "pi-mono",
+    "github-issues",
+    "sdlc"
+  ],
+  "author": "factory-demo",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@mariozechner/pi-agent-core": "^0.73.1",
+    "@mariozechner/pi-ai": "^0.73.1"
+  }
+}

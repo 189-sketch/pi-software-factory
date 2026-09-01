@@ -1,0 +1,10 @@
+{
+  "number": 100,
+  "title": "Add a POST /api/export endpoint that converts the current edited image to PNG",
+  "body": "We need a server endpoint that accepts the current edit result from the client and returns a PNG. Acceptance criteria:\n\n1. Endpoint: POST /api/export with JSON body { imageId: string, format: 'png' | 'jpeg', quality?: number }\n2. Looks up the cached edit result by imageId.\n3. Encodes it to the requested format (default png).\n4. Returns the bytes with Content-Type set correctly and Content-Disposition: attachment; filename=<imageId>-edited.<ext>.\n5. Returns 404 when imageId is unknown, 400 when format is unsupported.\n6. Includes a node:test test file that exercises the happy path and both error paths.\n\nThis is small, bounded, and self-contained. No external services needed.",
+  "labels": [],
+  "author": "alice",
+  "url": "https://github.com/demo/factory-target/issues/100",
+  "createdAt": "2026-09-01T00:00:00Z",
+  "comments": []
+}

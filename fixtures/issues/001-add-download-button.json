@@ -1,0 +1,10 @@
+{
+  "number": 1,
+  "title": "Add a download button for the edited image",
+  "body": "Users can edit an image but cannot save it locally. Add a 'Download' button next to the result that exports the current result as a PNG. Make sure the filename uses the original name with `-edited.png` suffix.",
+  "labels": [],
+  "author": "alice",
+  "url": "https://github.com/demo/factory-target/issues/1",
+  "createdAt": "2026-08-30T10:00:00Z",
+  "comments": []
+}
