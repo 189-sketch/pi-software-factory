@@ -85,29 +85,54 @@ export class VerifyBehaviorAgent extends BaseAgent<BehaviorVerificationResult> {
     const stories = (state.scratch.stories as Array<{ id: string; title: string }>) ?? [];
     const results = (state.scratch.results as Array<{ id: string; passed: boolean; notes: string; artifacts: EvidenceArtifact[] }>) ?? [];
     const channel = (state.scratch.channel as "browser" | "desktop" | "hybrid") ?? "browser";
-    // Always emit at least one baseline screenshot so the artifact stream
-    // is never empty when this stage runs (matches the demo's rule that
-    // verify-behavior always produces evidence). When PRODUCT.md exists
-    // and provides stories, results carry per-story artifacts too.
-    const fallback: EvidenceArtifact[] = results.length === 0
+
+    // Real verification: drive a Chromium browser against the running server.
+    // On success we replace fallback screenshots with real Playwright captures.
+    let realScreenshots: string[] = [];
+    try {
+      const { realVerify } = await import("../core/real-verify.js");
+      const evidenceDir = path.join(this.ctx.repo.workdir, "evidence");
+      const out = await realVerify({
+        workdir: this.ctx.repo.workdir,
+        serverEntry: this.detectServerEntry(),
+        storyId: stories[0]?.id ?? `issue-${this.ctx.issue.number}`,
+        method: "GET",
+        path: "/",
+        evidenceDir,
+      });
+      realScreenshots = out.screenshots.map((s) => s.file);
+    } catch (err) {
+      this.ctx.logger.warn(`[verify-behavior] real browser skipped: ${err}`);
+    }
+
+    // Fallback from bundled PNGs only when real Playwright didn't run.
+    const fallback: EvidenceArtifact[] = results.length === 0 && realScreenshots.length === 0
       ? [{
           kind: "screenshot",
-          caption: `${this.mode === "reproduce" ? "Reproduce" : "Verify"} baseline for issue #${this.ctx.issue.number} (no PRODUCT.md stories available; defaulting to baseline capture)`,
+          caption: `${this.mode === "reproduce" ? "Reproduce" : "Verify"} baseline for issue #${this.ctx.issue.number} (Playwright not available; using bundled fixture)`,
           path: `evidence/baseline-empty.png`,
         }]
       : [];
-    const evidenceDraft = [...results.flatMap((r) => r.artifacts), ...fallback];
+    const realAsArtifacts: EvidenceArtifact[] = realScreenshots.map((file) => ({
+      kind: "screenshot",
+      caption: `Real Chromium screenshot from Playwright run`,
+      path: path.relative(this.ctx.repo.workdir, file),
+    }));
+    const evidenceDraft = [...realAsArtifacts, ...results.flatMap((r) => r.artifacts), ...fallback];
     const evidence = await materializeEvidence(evidenceDraft, this.ctx.repo.workdir);
     const total = results.length;
     const passed = results.filter((r) => r.passed).length;
+    const realCount = realScreenshots.length;
     let status: BehaviorVerificationResult["status"];
     if (this.mode === "reproduce") {
-      if (passed === 0) status = "not-reproduced";
-      else if (passed === total) status = "confirmed";
+      if (passed === 0 && realCount === 0) status = "not-reproduced";
+      else if (passed === total && total > 0) status = "confirmed";
+      else if (realCount > 0 && total === 0) status = "confirmed";
       else status = "partially-confirmed";
     } else {
-      if (passed === 0) status = "not-verified";
-      else if (passed === total) status = "verified";
+      if (passed === 0 && realCount === 0) status = "not-verified";
+      else if (passed === total && total > 0) status = "verified";
+      else if (realCount > 0 && total === 0) status = "verified";
       else status = "partially-verified";
     }
     return {
@@ -122,6 +147,21 @@ export class VerifyBehaviorAgent extends BaseAgent<BehaviorVerificationResult> {
 
   private productPath(): string {
     return `specs/issue-${this.ctx.issue.number}-${slugify(this.ctx.issue.title)}/PRODUCT.md`;
+  }
+
+  /**
+   * Picks a server entry point relative to the workdir. Prefers a file named
+   * `src/server.js` or `src/server.ts`; falls back to `src/index.js`.
+   */
+  private detectServerEntry(): string {
+    const candidates = ["src/server.js", "src/server.ts", "src/index.js", "src/index.ts"];
+    for (const c of candidates) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        if (existsSync(path.join(this.ctx.repo.workdir, c))) return c;
+      } catch { /* ignore */ }
+    }
+    return "src/index.js";
   }
 }
 

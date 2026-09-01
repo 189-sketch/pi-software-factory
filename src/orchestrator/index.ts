@@ -80,8 +80,19 @@ export class FactoryOrchestrator extends EventEmitter {
       state.triage = await runLlmAgent<TriageResult>({
         name: "triage",
         ctx,
-        systemPrompt: `You are the triage agent for the multi-agent software factory.\n\n${skillBodies.triage.body}\n\nBias toward action: when the issue has concrete acceptance criteria and a bounded scope (single endpoint, single component, single file change), classify as "Ready to implement". Only classify as "Needs info" when the issue is genuinely ambiguous or missing critical details (no acceptance criteria, vague problem statement, unclear environment). Do NOT classify clear, scoped requests as "Needs info" just because they are short.`,
-        userPrompt: `Triage issue #${issue.number}: ${issue.title}\n\nBody:\n${issue.body}\n\nUse the available tools to inspect the repo (read roadmap.md / vision.md if present) then return your final answer as a single JSON object with the keys: state (one of "Ready to implement", "Ready to spec", "Needs info", "Wait to implement"), label, remove_labels, comment.`,
+        systemPrompt: `You are the triage agent for the multi-agent software factory.\n\n${skillBodies.triage.body}\n\nBias toward action: when the issue has concrete acceptance criteria and a bounded scope, classify as "Ready to implement". Only classify as "Needs info" when truly ambiguous; "Wait to implement" only when the request is off-topic or duplicates existing work. The demo target is a small text-based image editor (per vision.md); image export, editing endpoints, and similar features fit the roadmap.`,
+        userPrompt: [
+          `Triage issue #${issue.number}: ${issue.title}`,
+          ``,
+          `Body / acceptance criteria:`,
+          issue.body,
+          ``,
+          `Use the read_file tool to inspect the repo (read roadmap.md / vision.md if present). Then return ONLY a single JSON object (no prose, no markdown). Start with '{' and finish with '}':`,
+          ``,
+          `{"state":"Ready to implement","label":"ready-to-implement","remove_labels":["ready-to-spec","needs-info","wait-to-implement","spec-ready-for-review"],"comment":"Triage decision: Ready to implement."}`,
+          ``,
+          `No commentary, no code fences — only the raw JSON.`,
+        ].join("\n"),
         parse: parseTriageJson,
       });
     } else {
@@ -141,6 +152,13 @@ export class FactoryOrchestrator extends EventEmitter {
     } else {
       const implAgent = new ImplementationAgent(implCtx, this.remotePath);
       state.implementation = await implAgent.run();
+      // Run verify-behavior in stub mode too so evidence/ is always populated.
+      try {
+        const verify = await new VerifyBehaviorAgent(implCtx, "verify").run();
+        state.implementation = { ...state.implementation, behaviorVerification: verify, issueNumber: issue.number };
+      } catch (err) {
+        this.logger.warn(`verify-behavior skipped: ${err}`);
+      }
     }
     this.emit("implementation", { issueNumber: issue.number, result: state.implementation });
 
