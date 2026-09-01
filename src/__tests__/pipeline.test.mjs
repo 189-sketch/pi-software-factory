@@ -168,18 +168,18 @@ function runCliWithWorkdir(fixturesDir, issueFile, workdir) {
     path.join(factoryDir, "node_modules", "tsx", "dist", "cli.mjs"),
     path.join(factoryDir, "src", "cli", "run-issue.ts"),
     "--issue", issuePath,
-  ], { cwd: workdir, encoding: "utf-8", env: { ...process.env, NODE_NO_WARNINGS: "1" }, stdio: ["ignore", "pipe", "ignore"] });
+  ], { cwd: workdir, encoding: "utf-8", env: { ...process.env, NODE_NO_WARNINGS: "1", NODE_TEST: "1" }, stdio: ["ignore", "pipe", "ignore"] });
   return parseLastJson(String(result));
 }
 
 function runCliWithSpecialIssue(name) {
-  const issuePath = path.join(repoRoot, "factory", "fixtures", "issues", "_improve.json");
+  const issuePath = path.join(factoryDir, "fixtures", "issues", "_improve.json");
   const result = execFileSync("node", [
     path.join(factoryDir, "node_modules", "tsx", "dist", "cli.mjs"),
     path.join(factoryDir, "src", "cli", "run-issue.ts"),
     "--issue", issuePath,
     "--stage", "improve-review-pr",
-  ], { cwd: repoRoot, encoding: "utf-8", env: { ...process.env, NODE_NO_WARNINGS: "1" }, stdio: ["ignore", "pipe", "ignore"] });
+  ], { cwd: factoryDir, encoding: "utf-8", env: { ...process.env, NODE_NO_WARNINGS: "1", NODE_TEST: "1" }, stdio: ["ignore", "pipe", "ignore"] });
   return parseLastJson(String(result));
 }
 

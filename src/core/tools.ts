@@ -176,6 +176,12 @@ export function commitAndPushTool(ctx: AgentContext): AgentTool {
       const branch = String(args.branch ?? "feature/auto");
       const message = String(args.message ?? "factory commit");
       const files = Array.isArray(args.files) ? (args.files as string[]) : undefined;
+      // Skip cleanly when the workdir is not a git repository (test fixtures).
+      try {
+        await exec("git", ["rev-parse", "--git-dir"], { cwd: c.repo.workdir });
+      } catch {
+        return { skipped: true, reason: "not a git repository", branch, commitSha: "", ok: false };
+      }
       const result = await commitAndPush({ workdir: c.repo.workdir, branch, message, files });
       return result;
     },

@@ -8,11 +8,13 @@ import type { AgentContext, FactoryIssueState, Issue, TriageLabel, TriageResult 
 import { TriageAgent } from "../agents/triage.js";
 import { SpecAgent } from "../agents/spec.js";
 import { ImplementationAgent } from "../agents/implementation.js";
+import { slugify } from "../agents/spec.js";
 import { ReviewPrAgent } from "../agents/review-pr.js";
 import { VerifyBehaviorAgent } from "../agents/verify-behavior.js";
 import { ImproveReviewPrAgent } from "../agents/improve-review-pr.js";
 import { commitAndPushTool, openPullRequestTool } from "../core/tools.js";
 import { runLlmAgent, resolveAgentMode, type AgentMode } from "../core/llm-agent.js";
+import type { ImplementationResult } from "../core/types.js";
 
 /**
  * FactoryOrchestrator wires the six agents into a complete pipeline.
@@ -103,8 +105,43 @@ export class FactoryOrchestrator extends EventEmitter {
 
     // 3. Implementation (Ready to implement, or after spec)
     const implCtx = baseCtx("implementation");
-    const implAgent = new ImplementationAgent(implCtx, this.remotePath);
-    state.implementation = await implAgent.run();
+    if (mode === "llm") {
+      const skillBody = skillBodies.implementation.body;
+      const userPrompt = [
+        `Implement issue #${issue.number}: ${issue.title}`,
+        ``,
+        `Body / acceptance criteria:`,
+        issue.body,
+        ``,
+        `Repo workdir: ${this.workdir}`,
+        `Use the available tools (read_file, write_file, run_shell, commit_and_push, open_pull_request) to:`,
+        `  1. Inspect the existing repo structure (run_shell: ls).`,
+        `  2. Implement the smallest cohesive change that satisfies every acceptance criterion in the issue body.`,
+        `  3. Write a real Node.js test file using node:test + node:assert that exercises the happy path AND every error path. Run it with node --test until it passes.`,
+        `  4. Commit and push on a feature branch named feature/issue-${issue.number}-${slugify(issue.title)}.`,
+        `  5. Open a pull request.`,
+        ``,
+        `When done, reply with ONLY a single JSON object (no prose, no markdown). Start your reply with '{' and finish with '}':`,
+        `{"filesChanged":["..."],"testCommand":"node --test ...","prUrl":"https://github.com/..."}`,
+      ].join("\n");
+      state.implementation = await runLlmAgent<ImplementationResult>({
+        name: "implementation",
+        ctx: implCtx,
+        systemPrompt: `You are the implementation agent for the multi-agent software factory.\n\n${skillBody}\n\nYou MUST satisfy every acceptance criterion stated in the issue body.`,
+        userPrompt,
+        parse: parseImplementationJson,
+      });
+      // Wire verify-behavior so evidence PNGs land in evidence/ on disk.
+      try {
+        const verify = await new VerifyBehaviorAgent(implCtx, "verify").run();
+        state.implementation = { ...state.implementation, behaviorVerification: verify, issueNumber: issue.number };
+      } catch (err) {
+        this.logger.warn(`verify-behavior skipped: ${err}`);
+      }
+    } else {
+      const implAgent = new ImplementationAgent(implCtx, this.remotePath);
+      state.implementation = await implAgent.run();
+    }
     this.emit("implementation", { issueNumber: issue.number, result: state.implementation });
 
     // 4. Review PR
@@ -225,6 +262,46 @@ function parseTriageJson(text: string): TriageResult {
     state: last.state,
     label: last.label,
     remove_labels: Array.isArray(last.remove_labels) ? last.remove_labels : [],
+    comment: typeof last.comment === "string" ? last.comment : "",
+  };
+}
+
+/** Parse the LLM's text output into an ImplementationResult. */
+function parseImplementationJson(text: string): ImplementationResult {
+  let last: any = null;
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        try {
+          const obj = JSON.parse(text.slice(start, i + 1));
+          if (obj && typeof obj === "object" && (Array.isArray(obj.filesChanged) || typeof obj.prUrl === "string")) {
+            last = obj;
+          }
+        } catch {}
+        start = -1;
+      }
+    }
+  }
+  if (!last) {
+    const m = text.match(/\{[\s\S]*\}/);
+    if (m) { try { last = JSON.parse(m[0]); } catch {} }
+  }
+  if (!last) throw new Error("LLM did not return a valid implementation JSON:\n" + text.slice(0, 800));
+  return {
+    issueNumber: 0,
+    branch: typeof last.branch === "string" ? last.branch : "",
+    commitSha: typeof last.commitSha === "string" ? last.commitSha : "",
+    prUrl: typeof last.prUrl === "string" ? last.prUrl : "",
+    prNumber: 0,
+    filesChanged: Array.isArray(last.filesChanged) ? last.filesChanged.map(String) : [],
+    validation: [],
     comment: typeof last.comment === "string" ? last.comment : "",
   };
 }

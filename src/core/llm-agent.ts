@@ -75,5 +75,8 @@ export async function runLlmAgent<TResult>(opts: LlmAgentOpts<TResult>): Promise
 export function resolveAgentMode(): AgentMode {
   const explicit = process.env.FACTORY_AGENT_MODE;
   if (explicit === "llm" || explicit === "stub") return explicit;
+  // Default to stub when run under node:test (NODE_TEST=1) so the suite
+  // doesn't accidentally hit the LLM and time out.
+  if (process.env.NODE_TEST === "1") return "stub";
   return isLlmConfigured() ? "llm" : "stub";
 }

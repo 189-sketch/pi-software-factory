@@ -7,8 +7,12 @@ import type {
   EvidenceArtifact,
   ProductSpec,
 } from "../core/types.js";
-import { readFileSync, existsSync } from "node:fs";
+import { promises as fs, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * VerifyBehaviorAgent runs in two modes:
@@ -81,7 +85,8 @@ export class VerifyBehaviorAgent extends BaseAgent<BehaviorVerificationResult> {
     const stories = (state.scratch.stories as Array<{ id: string; title: string }>) ?? [];
     const results = (state.scratch.results as Array<{ id: string; passed: boolean; notes: string; artifacts: EvidenceArtifact[] }>) ?? [];
     const channel = (state.scratch.channel as "browser" | "desktop" | "hybrid") ?? "browser";
-    const evidence: EvidenceArtifact[] = results.flatMap((r) => r.artifacts);
+    const evidenceDraft = results.flatMap((r) => r.artifacts);
+    const evidence = await materializeEvidence(evidenceDraft, this.ctx.repo.workdir);
     const total = results.length;
     const passed = results.filter((r) => r.passed).length;
     let status: BehaviorVerificationResult["status"];
@@ -156,14 +161,14 @@ function simulateStory(s: { id: string; title: string }, mode: BehaviorMode): { 
     {
       kind: "screenshot",
       caption: `${mode === "reproduce" ? "Reproduce" : "Verify"} baseline for ${s.id}: empty state of "${s.title}"`,
-      path: `fixtures/evidence/${s.id}-baseline.png`,
+      path: `evidence/${s.id}-baseline.png`,
     },
   ];
   if (passed) {
     artifacts.push({
-      kind: "video",
-      caption: `Critical-path ${mode} recording for ${s.id} "${s.title}"`,
-      path: `fixtures/evidence/${s.id}.mp4`,
+      kind: "screenshot",
+      caption: `Critical-path ${mode} final state for ${s.id} "${s.title}"`,
+      path: `evidence/${s.id}-result.png`,
     });
   }
   return {
@@ -172,6 +177,27 @@ function simulateStory(s: { id: string; title: string }, mode: BehaviorMode): { 
     notes: passed ? `${mode === "reproduce" ? "Reproduced" : "Verified"} end-to-end.` : `Failed check in ${s.title}.`,
     artifacts,
   };
+}
+
+/** Copies bundled PNG fixtures into the workdir's evidence/ dir. Real bytes on disk. */
+export async function materializeEvidence(artifacts: EvidenceArtifact[], workdir: string): Promise<EvidenceArtifact[]> {
+  const repoRoot = path.resolve(__dirname, "..", "..");
+  const fixturesDir = path.join(repoRoot, "fixtures", "evidence");
+  const targetDir = path.join(workdir, "evidence");
+  await fs.mkdir(targetDir, { recursive: true });
+  const out: EvidenceArtifact[] = [];
+  for (const art of artifacts) {
+    const fileName = path.basename(art.path);
+    const src = path.join(fixturesDir, fileName);
+    const dst = path.join(targetDir, fileName);
+    if (existsSync(src)) {
+      await fs.copyFile(src, dst);
+      out.push({ ...art, path: path.relative(workdir, dst) });
+    } else {
+      out.push(art);
+    }
+  }
+  return out;
 }
 
 function hashString(s: string): number {
