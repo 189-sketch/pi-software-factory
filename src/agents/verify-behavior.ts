@@ -85,7 +85,18 @@ export class VerifyBehaviorAgent extends BaseAgent<BehaviorVerificationResult> {
     const stories = (state.scratch.stories as Array<{ id: string; title: string }>) ?? [];
     const results = (state.scratch.results as Array<{ id: string; passed: boolean; notes: string; artifacts: EvidenceArtifact[] }>) ?? [];
     const channel = (state.scratch.channel as "browser" | "desktop" | "hybrid") ?? "browser";
-    const evidenceDraft = results.flatMap((r) => r.artifacts);
+    // Always emit at least one baseline screenshot so the artifact stream
+    // is never empty when this stage runs (matches the demo's rule that
+    // verify-behavior always produces evidence). When PRODUCT.md exists
+    // and provides stories, results carry per-story artifacts too.
+    const fallback: EvidenceArtifact[] = results.length === 0
+      ? [{
+          kind: "screenshot",
+          caption: `${this.mode === "reproduce" ? "Reproduce" : "Verify"} baseline for issue #${this.ctx.issue.number} (no PRODUCT.md stories available; defaulting to baseline capture)`,
+          path: `evidence/baseline-empty.png`,
+        }]
+      : [];
+    const evidenceDraft = [...results.flatMap((r) => r.artifacts), ...fallback];
     const evidence = await materializeEvidence(evidenceDraft, this.ctx.repo.workdir);
     const total = results.length;
     const passed = results.filter((r) => r.passed).length;
@@ -161,14 +172,14 @@ function simulateStory(s: { id: string; title: string }, mode: BehaviorMode): { 
     {
       kind: "screenshot",
       caption: `${mode === "reproduce" ? "Reproduce" : "Verify"} baseline for ${s.id}: empty state of "${s.title}"`,
-      path: `evidence/${s.id}-baseline.png`,
+      path: `evidence/baseline-empty.png`,
     },
   ];
   if (passed) {
     artifacts.push({
       kind: "screenshot",
       caption: `Critical-path ${mode} final state for ${s.id} "${s.title}"`,
-      path: `evidence/${s.id}-result.png`,
+      path: `evidence/after-result.png`,
     });
   }
   return {
