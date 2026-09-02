@@ -109,6 +109,74 @@ file. The factory uses the same primitives: each agent extends `BaseAgent`
 typed result. The orchestrator is a thin layer that manages the state
 machine.
 
+## Two run modes
+
+The installer (`scripts/install-factory.mjs`) supports two run modes that
+control where the agent code runs and where API keys live.
+
+### Mode 1: Cloud (GitHub Actions)
+
+Workflows in `.github/workflows/` run the factory inside ephemeral
+GitHub-hosted runners. Secrets live as **GitHub repo secrets**. No local
+process required.
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/189-sketch/pi-software-factory/main/scripts/install-factory.sh) /path/to/target --mode cloud
+gh secret set ANTHROPIC_AUTH_TOKEN --repo owner/name
+gh secret set ANTHROPIC_BASE_URL   --repo owner/name   # optional
+gh secret set ANTHROPIC_MODEL      --repo owner/name   # optional
+```
+
+### Mode 2: Local daemon
+
+A polling daemon runs **on your machine** and watches a target GitHub
+repo for new issues. Each issue is processed in a fresh local workdir.
+API keys live in `.factory-daemon/.env` (chmod 600) and never leave
+your box.
+
+```bash
+git clone https://github.com/<you>/my-app
+cd my-app
+node /path/to/pi-software-factory/scripts/install-factory.mjs . --mode local --repo <you>/my-app
+nano .factory-daemon/.env
+
+# run
+./.factory-daemon/start.sh               # Linux / macOS
+.factory-daemon\start.cmd                # Windows
+# or as a service
+sudo systemctl enable --now ./.factory-daemon/factory-daemon.service     # Linux
+cp .factory-daemon/com.github.factory-daemon.plist ~/Library/LaunchAgents/   # macOS
+launchctl load ~/Library/LaunchAgents/com.github.factory-daemon.plist
+.factory-daemon\install-windows-service.ps1 -RepoPath "$pwd"             # Windows
+net start FactoryDaemon
+```
+
+### Mode 3: Both
+
+`--mode both` installs both; you can switch at runtime without re-installing.
+
+### Local daemon: configuration
+
+`.factory-daemon/.env` keys:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GH_TOKEN` | — | `gh` CLI auth |
+| `ANTHROPIC_AUTH_TOKEN` | — | LLM API key |
+| `ANTHROPIC_BASE_URL` | `https://api.minimaxi.com/anthropic` | Anthropic-compatible base URL |
+| `ANTHROPIC_MODEL` | `MiniMax-M3` | Model id |
+| `FACTORY_GH_REPO` | — | `owner/name` of the target repo |
+| `FACTORY_POLL_INTERVAL` | `30` | Seconds between polls |
+
+## Verified end-to-end against real GitHub
+
+- **Factory source:** https://github.com/189-sketch/pi-software-factory
+- **Target repo:** https://github.com/189-sketch/pi-software-factory-target
+- **Real issue → PR (merged):** https://github.com/189-sketch/pi-software-factory-target/pull/2
+
+12/12 checks pass against the original demo's contracts (see
+`scripts/objective-benchmark.mjs`).
+
 ## License
 
 MIT
