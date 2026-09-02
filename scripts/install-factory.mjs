@@ -77,6 +77,12 @@ async function copyDir(src, dst) {
   }
 }
 
+async function copyFileOr(src, dst) {
+  if (!existsSync(src)) return;
+  await fs.mkdir(path.dirname(dst), { recursive: true });
+  await fs.copyFile(src, dst);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help || args._.length === 0) {
@@ -103,9 +109,24 @@ async function main() {
   await copyDir(path.join(factoryRoot, "skills"), path.join(target, ".agents", "skills"));
   console.log("✓ Copied skills/ → .agents/skills/");
 
-  // 2. Copy factory/ code (the runner that agents invoke)
-  await copyDir(path.join(factoryRoot, "factory"), path.join(target, "factory"));
-  console.log("✓ Copied factory/");
+  // 2. Copy the agent runner code as factory/ in the target. The standalone
+  //    project keeps the agent code at the repo root (src/, package.json,
+  //    tsconfig.json); we copy those into a factory/ subdir so the daemon
+  //    and the cloud workflows can find src/cli/run-issue.ts at the
+  //    canonical path factory/src/cli/run-issue.ts.
+  const agentSrc = path.join(factoryRoot, "src");
+  if (existsSync(agentSrc)) {
+    await copyDir(agentSrc, path.join(target, "factory", "src"));
+    await copyFileOr(path.join(factoryRoot, "package.json"), path.join(target, "factory", "package.json"));
+    await copyFileOr(path.join(factoryRoot, "tsconfig.json"), path.join(target, "factory", "tsconfig.json"));
+    // Also copy the test fixtures the runner needs.
+    if (existsSync(path.join(factoryRoot, "fixtures", "evidence"))) {
+      await copyDir(path.join(factoryRoot, "fixtures", "evidence"), path.join(target, "factory", "fixtures", "evidence"));
+    }
+    console.log("✓ Copied factory/ (agent runner code)");
+  } else {
+    console.log("(no src/ dir in factory source; skipping agent code copy)");
+  }
 
   // 3. Cloud-specific: copy workflow templates to .github/workflows/
   if (mode === "cloud" || mode === "both") {
