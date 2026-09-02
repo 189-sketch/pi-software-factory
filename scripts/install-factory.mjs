@@ -147,31 +147,34 @@ async function main() {
     await fs.mkdir(daemonDir, { recursive: true });
     // Install daemon script.
     await fs.copyFile(path.join(factoryRoot, "scripts", "factory-daemon.mjs"), path.join(daemonDir, "factory-daemon.mjs"));
-    // npm install in factory/ so tsx is available (idempotent).
-    try { execFileSync("npm", ["install"], { cwd: path.join(target, "factory"), stdio: "ignore" }); } catch {}
-    // Wrapper start.sh (POSIX).
+    // npm install in factory/ so tsx is available (idempotent). On Windows
+    // npm ships as npm.cmd — Node 22+ needs shell:true to spawn it.
+    try {
+      const npmBin = process.platform === "win32" ? "npm.cmd" : "npm";
+      execFileSync(npmBin, ["install"], {
+        cwd: path.join(target, "factory"),
+        stdio: "ignore",
+        shell: process.platform === "win32",
+      });
+    } catch {}
+    // Wrapper start.sh (POSIX). The daemon itself loads .env via its built-in
+    // --env-file loader — keeps the wrapper free of bash dotenv quirks.
     const startSh = `#!/usr/bin/env bash
-# Start the factory daemon. Reads .env, polls the configured repo.
+# Start the factory daemon. .env is loaded by the daemon itself.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-[ -f .factory-daemon/.env ] && set -a && . ./.factory-daemon/.env && set +a
 exec node .factory-daemon/factory-daemon.mjs "$@"
 `;
     writeFileSync(path.join(daemonDir, "start.sh"), startSh);
     chmodSync(path.join(daemonDir, "start.sh"), 0o755);
 
-    // Wrapper start.cmd (Windows). Reads .env at the same path and invokes
-    // node from PATH or a sibling node.exe.
+    // Wrapper start.cmd (Windows). Likewise defers env loading to the daemon
+    // — old code shell-parsed .env in cmd and silently failed (see git log).
     const startCmd = `@echo off
-REM Start the factory daemon. Reads .env, polls the configured repo.
-REM Usage:  start.cmd
+REM Start the factory daemon. .env is loaded by the daemon itself.
+REM Usage:  start.cmd [extra args forwarded to factory-daemon.mjs]
 setlocal
 cd /D "%~dp0\\.."
-if exist .factory-daemon\\.env (
-  for /f "usebackq tokens=1* delims==" %%a in (".factory-daemon\\.env") do (
-    if not "%%a"=="%%~a" set "%%a=%%~b"
-  )
-)
 where node >nul 2>nul
 if errorlevel 1 (
   echo node.exe not found in PATH. Install Node.js 20+ from https://nodejs.org/.
@@ -274,6 +277,20 @@ Secrets live in \`.factory-daemon/.env\` (chmod 600), never on GitHub.
 | \`ANTHROPIC_MODEL\` | Model id (default: MiniMax-M3) |
 | \`FACTORY_GH_REPO\` | \`owner/name\` of the target repo |
 | \`FACTORY_POLL_INTERVAL\` | Seconds between polls (default: 30) |
+
+### Optional: skip the .env entirely
+
+The daemon gracefully falls back when secrets aren't set in \`.env\`:
+
+- \`GH_TOKEN\` — falls back to \`gh auth token\` (uses the active \`gh\` CLI
+  login on this machine). If you've already run \`gh auth login\`, no token
+  configuration is required.
+- \`ANTHROPIC_AUTH_TOKEN\`, \`ANTHROPIC_BASE_URL\`, \`ANTHROPIC_MODEL\` — fall
+  back to the \`env\` block of \`~/.claude/settings.json\`. If you have
+  Claude Code configured there, the daemon reuses those credentials.
+
+Explicit values in \`.env\` always win; real shell env wins over \`.env\`;
+\`--no-env-file\` / \`--no-fallback-env\` disable each respectively.
 
 ## State
 

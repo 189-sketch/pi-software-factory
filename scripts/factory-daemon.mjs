@@ -39,8 +39,109 @@ function getEnv(name, fallback) {
 }
 
 const args = parseArgs(process.argv.slice(2));
+
+// Load env from .env file FIRST (before reading any process.env below).
+// Default to .factory-daemon/.env so the installer-wrapped start.sh /
+// start.cmd don't have to shell-parse dotenv files (which is brittle on
+// Windows .cmd). Explicit --env-file=path wins; pass --no-env-file to skip.
+const SKIP_ENV_FILE = args.noEnvFile === true || args.envFile === "-";
+if (!SKIP_ENV_FILE) {
+  const envPath = (typeof args.envFile === "string" && args.envFile.length)
+    ? path.resolve(args.envFile)
+    : path.resolve(process.cwd(), ".factory-daemon", ".env");
+  if (fsSync.existsSync(envPath)) {
+    loadDotEnv(envPath);
+  }
+}
+
 const STATE_DIR = args.stateDir || path.join(process.cwd(), ".factory");
 fsSync.mkdirSync(STATE_DIR, { recursive: true });
+
+/**
+ * Apply fallback env sources, in order, ONLY where the variable is not
+ * already set. Real shell env wins. Caller can disable via --no-fallback-env.
+ *
+ *  1. ~/.claude/settings.json  → pulls ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL,
+ *                                ANTHROPIC_MODEL (the user's local Claude Code
+ *                                config — reuses credentials you've
+ *                                already authorised there).
+ *  2. gh CLI                   → if `gh auth status` succeeds, use the
+ *                                authenticated account's token for GH_TOKEN.
+ *                                Avoids forcing users to set GH_TOKEN when
+ *                                they've already done `gh auth login`.
+ *
+ * The defaults are minimaxi (per project README) so the daemon is usable
+ * with just `~/.claude/settings.json` or the env vars, no manual config.
+ */
+function applyEnvFallbacks() {
+  const sources = [];
+
+  // (1) ~/.claude/settings.json — only fill unset keys.
+  const claudeSettings = path.join(os.homedir(), ".claude", "settings.json");
+  if (fsSync.existsSync(claudeSettings)) {
+    try {
+      const json = JSON.parse(fsSync.readFileSync(claudeSettings, "utf-8"));
+      if (json && typeof json.env === "object" && json.env !== null) {
+        let loaded = 0;
+        for (const [k, v] of Object.entries(json.env)) {
+          if (process.env[k] === undefined && v !== undefined && v !== null) {
+            process.env[k] = String(v);
+            loaded++;
+          }
+        }
+        if (loaded > 0) sources.push({ source: "claude-settings", count: loaded });
+      }
+    } catch (err) {
+      // ignore — file may not be JSON
+    }
+  }
+
+  // (2) gh CLI fallback for GH_TOKEN.
+  if (!process.env.GH_TOKEN && !process.env.GITHUB_TOKEN) {
+    try {
+      const out = execFileSync("gh", ["auth", "token"], {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      if (out) {
+        process.env.GH_TOKEN = out;
+        sources.push({ source: "gh-cli", count: 1 });
+      }
+    } catch {
+      // gh CLI not installed or not logged in — fallback unavailable.
+    }
+  }
+
+  return sources;
+}
+
+/**
+ * Minimal .env loader. KEY=VALUE, lines starting with # are comments, empty
+ * lines skipped, optional surrounding quotes trimmed, existing process.env
+ * wins (so real shell env still overrides .env). Not exported; scoped here.
+ */
+function loadDotEnv(file) {
+  const text = fsSync.readFileSync(file, "utf-8");
+  let loaded = 0;
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    let val = line.slice(eq + 1).trim();
+    // Strip surrounding quotes if present.
+    if ((val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    if (process.env[key] === undefined) {
+      process.env[key] = val;
+      loaded++;
+    }
+  }
+  return loaded;
+}
 
 const log = (level, msg, extra = {}) => {
   const ts = new Date().toISOString();
@@ -48,6 +149,13 @@ const log = (level, msg, extra = {}) => {
   console.log(line);
   fsSync.appendFileSync(path.join(STATE_DIR, "daemon.log"), line + "\n");
 };
+
+// Apply env fallbacks AFTER the .env load + AFTER log() is defined so we can
+// record which sources actually contributed. --no-fallback-env disables.
+const envSources = args.noFallbackEnv ? [] : applyEnvFallbacks();
+if (envSources.length > 0) {
+  log("INFO", "env-fallbacks-applied", { sources: envSources });
+}
 
 const GH_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || "";
 const ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || "";
@@ -71,6 +179,15 @@ function parseArgs(argv) {
     else if (a === "--workdir") out.workdir = argv[++i];
     else if (a === "--state-dir") out.stateDir = argv[++i];
     else if (a === "--dry-run") out.dry = argv[++i];
+    else if (a === "--env-file") {
+      // `--env-file path`, `--env-file=path`, or `--env-file -` to skip.
+      const next = argv[i + 1];
+      if (next === undefined) { out.envFile = ""; }
+      else if (next.startsWith("=")) { out.envFile = next.slice(1); i++; }
+      else { out.envFile = next; i++; }
+    }
+    else if (a === "--no-env-file") out.noEnvFile = true;
+    else if (a === "--no-fallback-env") out.noFallbackEnv = true;
   }
   return out;
 }
@@ -185,8 +302,19 @@ async function processIssue(issue) {
       });
       // Copy factory/ directory into the workdir so the CLI can run.
       execFileSync("cp", ["-r", path.join(factoryRoot, "factory"), path.join(issueWorkdir, "factory")], { stdio: "ignore" });
-      // Install deps (idempotent).
-      execFileSync("npm", ["install"], { cwd: path.join(issueWorkdir, "factory"), stdio: "ignore" });
+      // Install deps (idempotent). On Windows, npm ships as npm.cmd — Node 22+
+      // refuses to spawn .cmd/.bat without shell:true (EINVAL). install-factory
+      // already ran npm install in factory/, so failures here are tolerable.
+      const npmBin = process.platform === "win32" ? "npm.cmd" : "npm";
+      try {
+        execFileSync(npmBin, ["install"], {
+          cwd: path.join(issueWorkdir, "factory"),
+          stdio: "ignore",
+          shell: process.platform === "win32",
+        });
+      } catch (err) {
+        log("WARN", "npm-install-skipped", { issue: issue.number, error: String(err) });
+      }
     } catch (err) {
       log("ERROR", "clone-failed", { issue: issue.number, error: String(err) });
       return { ok: false, error: "clone failed" };
