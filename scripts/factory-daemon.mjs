@@ -136,6 +136,9 @@ function loadDotEnv(file) {
       val = val.slice(1, -1);
     }
     if (process.env[key] === undefined) {
+      // Skip installer-style placeholder values (ghp_replace_me / sk-..._replace_me)
+      // so fallback layers (gh-cli auth, ~/.claude/settings.json) still kick in.
+      if (/replace[_ ]?me|^ghp_$|^sk-(ant-)?$/i.test(val)) continue;
       process.env[key] = val;
       loaded++;
     }
