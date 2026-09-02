@@ -105,9 +105,15 @@ async function main() {
   console.log(`\nInstalling factory into: ${target}`);
   console.log(`Mode: ${mode}\n`);
 
-  // 1. Copy skills/ → .agents/skills/ in target (matches the demo's path convention)
-  await copyDir(path.join(factoryRoot, "skills"), path.join(target, ".agents", "skills"));
-  console.log("✓ Copied skills/ → .agents/skills/");
+  // 1. Copy skills/ → .agents/skills/ in target (matches the demo's path
+  //    convention) AND into factory/skills/ (the CLI resolves SKILL.md
+  //    via ../../skills relative to its own src/cli directory, so the
+  //    factory/ subdir must have its own copy).
+  if (existsSync(path.join(factoryRoot, "skills"))) {
+    await copyDir(path.join(factoryRoot, "skills"), path.join(target, ".agents", "skills"));
+    await copyDir(path.join(factoryRoot, "skills"), path.join(target, "factory", "skills"));
+    console.log("✓ Copied skills/ → .agents/skills/ + factory/skills/");
+  }
 
   // 2. Copy the agent runner code as factory/ in the target. The standalone
   //    project keeps the agent code at the repo root (src/, package.json,
@@ -122,6 +128,9 @@ async function main() {
     // Also copy the test fixtures the runner needs.
     if (existsSync(path.join(factoryRoot, "fixtures", "evidence"))) {
       await copyDir(path.join(factoryRoot, "fixtures", "evidence"), path.join(target, "factory", "fixtures", "evidence"));
+    }
+    if (existsSync(path.join(factoryRoot, "fixtures", "issues"))) {
+      await copyDir(path.join(factoryRoot, "fixtures", "issues"), path.join(target, "factory", "fixtures", "issues"));
     }
     console.log("✓ Copied factory/ (agent runner code)");
   } else {

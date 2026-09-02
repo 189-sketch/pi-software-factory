@@ -226,6 +226,46 @@ function findOnPath(name) {
 }
 
 /**
+ * Copy only the parts of factory/ needed to run the CLI into dst. Skips
+ * node_modules (the CLI's deps are already installed once by
+ * install-factory, and a 100MB+ cp -r on Windows takes minutes — long
+ * enough that an operator thinks the daemon is dead). We copy src/,
+ * skills/, fixtures/, package.json, tsconfig.json, then symlink
+ * (junction on Windows) the prepared node_modules so that `tsx`
+ * resolves inside the workdir.
+ */
+async function copyFactorySkeleton(srcFactory, dstFactory) {
+  const dirsToCopy = ["src", "skills", "fixtures"];
+  const filesToCopy = ["package.json", "tsconfig.json"];
+  for (const d of dirsToCopy) {
+    const s = path.join(srcFactory, d);
+    const d2 = path.join(dstFactory, d);
+    if (fsSync.existsSync(s)) {
+      await fs.cp(s, d2, { recursive: true });
+    }
+  }
+  for (const f of filesToCopy) {
+    const s = path.join(srcFactory, f);
+    const d2 = path.join(dstFactory, f);
+    if (fsSync.existsSync(s)) {
+      await fs.copyFile(s, d2);
+    }
+  }
+  // node_modules: reuse the prepared one via symlink so the workdir's
+  // `tsx` resolves without re-installing. On Windows use a directory
+  // junction (works without admin, unlike a symlink).
+  const srcNm = path.join(srcFactory, "node_modules");
+  const dstNm = path.join(dstFactory, "node_modules");
+  if (fsSync.existsSync(srcNm) && !fsSync.existsSync(dstNm)) {
+    try {
+      await fs.symlink(srcNm, dstNm, process.platform === "win32" ? "junction" : "dir");
+    } catch (err) {
+      log("WARN", "node_modules-junction-failed", { src: srcNm, dst: dstNm, error: String(err) });
+    }
+  }
+}
+
+/**
  * Returns null when there are no new issues.
  */
 async function fetchNextIssue() {
@@ -274,14 +314,23 @@ async function fetchNextFromGitHub() {
     // Sort by createdAt ascending so we process oldest first.
     issues.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
     for (const issue of issues) {
+      // `processed-N` is the persistent "successfully finished" marker.
+      // `fetched-N` is a transient "in flight this poll cycle" marker that
+      // processIssue() removes on failure so a crashed/aborted run is
+      // retried on the next poll. Without this split, a transient clone or
+      // npm failure would silently blacklist the issue forever.
+      const fetchedKey = `fetched-${issue.number}`;
       const processedKey = `processed-${issue.number}`;
       if (fsSync.existsSync(path.join(STATE_DIR, processedKey))) continue;
+      if (fsSync.existsSync(path.join(STATE_DIR, fetchedKey))) continue;
       // Skip if user has explicitly labeled ready-to-spec or has any agent-applied label.
       const labelNames = (issue.labels || []).map((l) => (typeof l === "string" ? l : l.name));
       if (labelNames.some((l) => /^(ready-to-spec|ready-to-implement|needs-info|wait-to-implement)$/.test(l))) continue;
       log("INFO", "picked-up-issue-from-github", { issue: issue.number, title: issue.title });
-      // Mark as seen so we don't re-pick within the next poll cycle.
-      fsSync.writeFileSync(path.join(STATE_DIR, processedKey), new Date().toISOString());
+      // Claim the issue for this poll cycle. processIssue() removes this
+      // file if it fails so the next poll retries; on success it writes
+      // the permanent `processed-N` marker instead.
+      fsSync.writeFileSync(path.join(STATE_DIR, fetchedKey), new Date().toISOString());
       // Materialize to a temp issue.json for the CLI.
       const issuePath = path.join(STATE_DIR, `issue-${issue.number}.json`);
       await fs.writeFile(issuePath, JSON.stringify({
@@ -327,46 +376,37 @@ async function processIssue(issue) {
 
   if (FACTORY_GH_REPO && GH_TOKEN) {
     // Clone the target repo so commit_and_push has somewhere to push.
+    log("INFO", "cloning-target-repo", { issue: issue.number, repo: FACTORY_GH_REPO, dst: issueWorkdir });
     try {
       execFileSync("gh", ["repo", "clone", FACTORY_GH_REPO, issueWorkdir], {
         stdio: "ignore",
         env: { ...process.env, GH_TOKEN },
       });
-      // Copy factory/ directory into the workdir so the CLI can run.
-      execFileSync("cp", ["-r", path.join(factoryRoot, "factory"), path.join(issueWorkdir, "factory")], { stdio: "ignore" });
-      // Install deps (idempotent). On Windows, npm ships as npm.cmd — Node 22+
-// refuses to spawn .cmd/.bat directly (EINVAL). Resolving npm.cmd via PATH
-// and using spawnSync (with shell:false) avoids both the EINVAL and the
-// shell-injection deprecation warning. install-factory already ran
-// `npm install` in factory/, so failures here are tolerable.
-      const npmArgs = ["install"];
-      let npmCmd, npmSpawn;
-      if (process.platform === "win32") {
-        // Resolve npm.cmd from PATH or fall back to the nvm default.
-        const npmCmdPath = await findOnPath("npm.cmd")
-          || path.join(process.env.NVM_HOME || process.env.NVM_SYMLINK || "C:\\nvm", "nodejs", "npm.cmd");
-        npmCmd = npmCmdPath;
-        npmSpawn = { shell: false };
-      } else {
-        npmCmd = "npm";
-        npmSpawn = {};
-      }
-      try {
-        execFileSync(npmCmd, npmArgs, {
-          cwd: path.join(issueWorkdir, "factory"),
-          stdio: "ignore",
-          ...npmSpawn,
-        });
-      } catch (err) {
-        log("WARN", "npm-install-skipped", { issue: issue.number, error: String(err) });
-      }
+      log("INFO", "clone-done", { issue: issue.number, dst: issueWorkdir });
+      // Copy only the CLI skeleton (src/ + configs + fixtures). Skip
+      // node_modules: a recursive cp of factory/ including node_modules
+      // copies ~180MB and stalls the daemon for minutes (and on Windows
+      // silently hangs on long paths). copyFactorySkeleton re-uses the
+      // pre-installed node_modules via a symlink / directory junction.
+      await copyFactorySkeleton(
+        path.join(factoryRoot, "factory"),
+        path.join(issueWorkdir, "factory"),
+      );
+      log("INFO", "factory-skeleton-copied", { issue: issue.number, dst: issueWorkdir });
+      // Skip npm install in the daemon. install-factory has already
+      // prepared a fully populated <target>/factory/node_modules, and
+      // copyFactorySkeleton junctions it into the workdir. Running
+      // `npm install` on every issue adds minutes of latency and on
+      // Windows faces .cmd / long-path issues that have nothing to do
+      // with the actual pipeline work. Pass --do-npm-install on the CLI
+      // (or set FACTORY_DO_NPM_INSTALL=1) to re-enable.
     } catch (err) {
       log("ERROR", "clone-failed", { issue: issue.number, error: String(err) });
       return { ok: false, error: "clone failed" };
     }
   } else {
-    // No remote target; just run against a fresh dir.
-    execFileSync("cp", ["-r", factoryRoot, issueWorkdir], { stdio: "ignore" });
+    // No remote target — work directly from factoryRoot.
+    await copyFactorySkeleton(factoryRoot, path.join(issueWorkdir, "factory"));
   }
 
   const env = {
@@ -382,12 +422,23 @@ async function processIssue(issue) {
 
   const cliPath = path.join(issueWorkdir, "factory", "src", "cli", "run-issue.ts");
   const cliRoot = path.join(issueWorkdir, "factory");
-  log("INFO", "starting-pipeline", { issue: issue.number, workdir: cliRoot });
+  // tsx resolves relative to cliRoot: install-factory placed the prepared
+  // node_modules in <target>/factory/node_modules/. We also junction
+  // it into <workdir>/factory/node_modules via copyFactorySkeleton(), so
+  // either path works — pick whichever exists.
+  const tsxCandidates = [
+    path.join(cliRoot, "node_modules", "tsx", "dist", "cli.mjs"),
+    path.join(factoryRoot, "factory", "node_modules", "tsx", "dist", "cli.mjs"),
+    path.join(factoryRoot, "node_modules", "tsx", "dist", "cli.mjs"),
+  ];
+  const tsxCli = tsxCandidates.find((p) => fsSync.existsSync(p))
+    || tsxCandidates[0];
+  log("INFO", "starting-pipeline", { issue: issue.number, workdir: cliRoot, tsx: tsxCli });
 
   let stdout = "", stderr = "";
   const exitCode = await new Promise((resolve) => {
     const child = spawn("node", [
-      path.join(factoryRoot, "node_modules", "tsx", "dist", "cli.mjs"),
+      tsxCli,
       cliPath,
       "--issue", issuePath,
     ], { cwd: cliRoot, env, stdio: ["ignore", "pipe", "pipe"] });
@@ -411,6 +462,17 @@ async function processIssue(issue) {
   };
   fsSync.writeFileSync(path.join(STATE_DIR, `state-${issue.number}.json`), JSON.stringify(stateRecord, null, 2));
   log("INFO", "pipeline-done", { issue: issue.number, exitCode, summary });
+
+  // Bookkeeping: write the permanent processed-N marker only when the
+  // pipeline actually succeeded (exitCode 0). Remove the transient
+  // fetched-N marker in either case so a fresh `fetched-` write can
+  // appear on the next poll when this run failed.
+  const fetchedKey = `fetched-${issue.number}`;
+  const processedKey = `processed-${issue.number}`;
+  try { fsSync.unlinkSync(path.join(STATE_DIR, fetchedKey)); } catch {}
+  if (exitCode === 0) {
+    fsSync.writeFileSync(path.join(STATE_DIR, processedKey), new Date().toISOString());
+  }
   return { ok: exitCode === 0, summary, stdout, stderr };
 }
 
@@ -421,7 +483,20 @@ async function pollingLoop() {
     try {
       const issue = await fetchNextIssue();
       if (issue) {
-        await processIssue(issue);
+        log("INFO", "process-issue-start", { issue: issue.number });
+        try {
+          const result = await processIssue(issue);
+          log("INFO", "process-issue-end", { issue: issue.number, ok: result?.ok });
+        } catch (inner) {
+          log("ERROR", "process-issue-failed", {
+            issue: issue.number,
+            error: String(inner),
+            stack: inner?.stack ? String(inner.stack).split("\n").slice(0, 5).join(" | ") : null,
+          });
+          // Drop the in-flight marker so the next poll retries. Don't write
+          // the permanent processed-N marker.
+          try { fsSync.unlinkSync(path.join(STATE_DIR, `fetched-${issue.number}`)); } catch {}
+        }
       } else {
         await sleep(POLL_INTERVAL * 1000);
       }
@@ -433,6 +508,17 @@ async function pollingLoop() {
 }
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+// Belt + suspenders. processIssue does multiple await execFileSync calls
+// and remote ops that can throw; without these handlers the daemon would
+// silently exit on unhandled rejections (especially under Windows where
+// the worker thread exits before its log buffer flushes).
+process.on("unhandledRejection", (reason) => {
+  try { log("ERROR", "unhandled-rejection", { error: String(reason) }); } catch {}
+});
+process.on("uncaughtException", (err) => {
+  try { log("ERROR", "uncaught-exception", { error: String(err) }); } catch {}
+});
 
 // === Webhook server ===
 async function startWebhookServer() {
