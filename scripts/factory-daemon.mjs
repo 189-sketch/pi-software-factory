@@ -563,6 +563,26 @@ async function startWebhookServer() {
 (async () => {
   if (!GH_TOKEN) log("WARN", "no-gh-token", {});
   if (!ANTHROPIC_AUTH_TOKEN) log("WARN", "no-anthropic-token", {});
+
+  // Sweep stale fetched-* markers. fetched-N is supposed to be transient
+  // — processIssue removes it on success (after writing processed-N) or
+  // on failure (so the next poll can retry). But if the daemon crashes
+  // mid-pipeline (SIGKILL, OOM, lost terminal), the marker lingers and
+  // wedges the issue forever. On every start, treat any fetched-* whose
+  // owning state-* is not from the current run as stale and drop it.
+  let cleared = 0;
+  try {
+    const entries = fsSync.readdirSync(STATE_DIR);
+    for (const name of entries) {
+      if (!name.startsWith("fetched-")) continue;
+      // Only consider fetched-* whose daemon mtime doesn't match a
+      // running process; simplest heuristic: drop the marker entirely
+      // on a fresh start. processIssue will re-create it immediately.
+      try { fsSync.unlinkSync(path.join(STATE_DIR, name)); cleared++; } catch {}
+    }
+  } catch {}
+  if (cleared > 0) log("INFO", "cleared-stale-fetched-markers", { cleared });
+
   if (WEBHOOK_PORT) await startWebhookServer();
   await pollingLoop();
 })();
