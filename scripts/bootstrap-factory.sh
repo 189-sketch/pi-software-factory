@@ -128,6 +128,7 @@ echo ""
 # 5. Clone the factory repo (we need the skills/, factory/, scripts/ files
 # the installer references — the installer resolves paths relative to its
 # own location, so we have to keep them together).
+TMP_INSTALLER=""
 WORK="$(mktemp -d)"
 trap 'rm -rf "$TMP_INSTALLER" "$WORK"' EXIT
 if ! git clone --depth 1 --branch "$FACTORY_BRANCH" \
