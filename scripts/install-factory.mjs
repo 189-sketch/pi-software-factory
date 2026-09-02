@@ -147,14 +147,34 @@ async function main() {
     await fs.mkdir(daemonDir, { recursive: true });
     // Install daemon script.
     await fs.copyFile(path.join(factoryRoot, "scripts", "factory-daemon.mjs"), path.join(daemonDir, "factory-daemon.mjs"));
-    // npm install in factory/ so tsx is available (idempotent). On Windows
-    // npm ships as npm.cmd — Node 22+ needs shell:true to spawn it.
+    // npm install in factory/ so tsx is available (idempotent). Resolves
+    // npm from PATH so we don't need shell:true on Windows (avoids the
+    // Node 22+ deprecation warning + EINVAL).
     try {
-      const npmBin = process.platform === "win32" ? "npm.cmd" : "npm";
-      execFileSync(npmBin, ["install"], {
+      const isWin = process.platform === "win32";
+      let npmCmd;
+      if (isWin) {
+        const findOnPath = (name) => {
+          const sep = ";";
+          const dirs = (process.env.PATH || "").split(sep).filter(Boolean);
+          for (const dir of dirs) {
+            const full = path.join(dir, name);
+            if (existsSync(full)) return full;
+            if (!/\.[a-z]+$/i.test(name)) {
+              for (const ext of (process.env.PATHEXT || "").split(";")) {
+                const c2 = full + ext;
+                if (existsSync(c2)) return c2;
+              }
+            }
+          }
+          return null;
+        };
+        npmCmd = findOnPath("npm.cmd");
+      }
+      execFileSync(npmCmd || "npm", ["install"], {
         cwd: path.join(target, "factory"),
         stdio: "ignore",
-        shell: process.platform === "win32",
+        shell: false,
       });
     } catch {}
     // Wrapper start.sh (POSIX). The daemon itself loads .env via its built-in

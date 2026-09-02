@@ -193,7 +193,36 @@ function parseArgs(argv) {
 }
 
 /**
- * Fetch the next new issue from the configured GitHub repo (or local dir).
+ * Search the system PATH for an executable. Returns the absolute path of
+ * the first match, or null. Used to spawn .cmd / .bat on Windows without
+ * invoking cmd.exe (which Node 22+ blocks without shell: true, and which
+ * also produces a deprecation warning around argument escaping).
+ */
+function findOnPath(name) {
+  const sep = process.platform === "win32" ? ";" : ":";
+  const dirs = (process.env.PATH || "").split(sep).filter(Boolean);
+  const pathext = (process.env.PATHEXT || "").split(";").map((s) => s.toLowerCase());
+  for (const dir of dirs) {
+    const candidate = path.join(dir, name);
+    try {
+      const st = fsSync.statSync(candidate);
+      if (st.isFile()) return candidate;
+    } catch {}
+    if (process.platform === "win32") {
+      // Try the bare name; on Windows, exec handles PATHEXT for .cmd/.exe.
+      for (const ext of pathext) {
+        const c2 = candidate + ext;
+        try {
+          const st = fsSync.statSync(c2);
+          if (st.isFile()) return c2;
+        } catch {}
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Returns null when there are no new issues.
  */
 async function fetchNextIssue() {
@@ -303,14 +332,27 @@ async function processIssue(issue) {
       // Copy factory/ directory into the workdir so the CLI can run.
       execFileSync("cp", ["-r", path.join(factoryRoot, "factory"), path.join(issueWorkdir, "factory")], { stdio: "ignore" });
       // Install deps (idempotent). On Windows, npm ships as npm.cmd — Node 22+
-      // refuses to spawn .cmd/.bat without shell:true (EINVAL). install-factory
-      // already ran npm install in factory/, so failures here are tolerable.
-      const npmBin = process.platform === "win32" ? "npm.cmd" : "npm";
+// refuses to spawn .cmd/.bat directly (EINVAL). Resolving npm.cmd via PATH
+// and using spawnSync (with shell:false) avoids both the EINVAL and the
+// shell-injection deprecation warning. install-factory already ran
+// `npm install` in factory/, so failures here are tolerable.
+      const npmArgs = ["install"];
+      let npmCmd, npmSpawn;
+      if (process.platform === "win32") {
+        // Resolve npm.cmd from PATH or fall back to the nvm default.
+        const npmCmdPath = await findOnPath("npm.cmd")
+          || path.join(process.env.NVM_HOME || process.env.NVM_SYMLINK || "C:\\nvm", "nodejs", "npm.cmd");
+        npmCmd = npmCmdPath;
+        npmSpawn = { shell: false };
+      } else {
+        npmCmd = "npm";
+        npmSpawn = {};
+      }
       try {
-        execFileSync(npmBin, ["install"], {
+        execFileSync(npmCmd, npmArgs, {
           cwd: path.join(issueWorkdir, "factory"),
           stdio: "ignore",
-          shell: process.platform === "win32",
+          ...npmSpawn,
         });
       } catch (err) {
         log("WARN", "npm-install-skipped", { issue: issue.number, error: String(err) });
