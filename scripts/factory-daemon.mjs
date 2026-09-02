@@ -54,7 +54,7 @@ if (!SKIP_ENV_FILE) {
   }
 }
 
-const STATE_DIR = args.stateDir || path.join(process.cwd(), ".factory");
+const STATE_DIR = args.stateDir || process.env.FACTORY_STATE_DIR || path.join(process.cwd(), ".factory");
 fsSync.mkdirSync(STATE_DIR, { recursive: true });
 
 /**
@@ -163,10 +163,10 @@ if (envSources.length > 0) {
 const GH_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || "";
 const ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || "";
 const FACTORY_GH_REPO = getEnv("FACTORY_GH_REPO", args.repo || "");
-const POLL_INTERVAL = Number(args.interval || 30);
-const WEBHOOK_PORT = args.webhookPort ? Number(args.webhookPort) : 0;
-const LOCAL_DIR = args.localDir || "";
-const WORKDIR = args.workdir || (LOCAL_DIR
+const POLL_INTERVAL = Number(args.interval || process.env.FACTORY_POLL_INTERVAL || 30);
+const WEBHOOK_PORT = Number(args.webhookPort || process.env.FACTORY_WEBHOOK_PORT || 0);
+const LOCAL_DIR = args.localDir || process.env.FACTORY_LOCAL_DIR || "";
+const WORKDIR = args.workdir || process.env.FACTORY_WORKDIR || (LOCAL_DIR
   ? path.join(process.cwd(), "factory-workdir")
   : path.join(os.tmpdir(), "factory-workdir-" + Date.now()));
 const DRY_RUN = args.dry || "";
