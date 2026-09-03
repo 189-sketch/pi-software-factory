@@ -45,7 +45,9 @@ async function main(): Promise<void> {
 
   for (const issue of issues) {
     let result;
-    if (args.stage === "improve-review-pr") {
+    if (args.stage === "triage") {
+      result = await orchestrator.runTriage(issue);
+    } else if (args.stage === "improve-review-pr") {
       result = await orchestrator.runImproveReviewPr(issue);
     } else if (args.stage === "verify-behavior") {
       result = await orchestrator.runVerifyBehavior(issue);

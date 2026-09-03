@@ -28,8 +28,9 @@ export class TriageAgent extends BaseAgent<TriageResult> {
         return { kind: "tool", description: "inspect vision", toolName: "read_file", args: { path: "vision.md" } };
       case "list_root":
         return { kind: "tool", description: "list repo root", toolName: "list_dir", args: { path: "." } };
+      case "update_labels":
+        return { kind: "tool", description: "apply triage label", toolName: "update_issue_labels", args: { add: [state.scratch.label as string], remove: state.scratch.remove_labels as string[] } };
       case "draft_comment":
-        // Synthesize the comment locally; no tool call needed.
         return { kind: "tool", description: "synthesize comment", toolName: "post_issue_comment", args: { body: (state.scratch.comment as string) ?? "" } };
       case "finish":
         return { kind: "finish", description: "triage done" };
@@ -66,6 +67,15 @@ export class TriageAgent extends BaseAgent<TriageResult> {
           next.scratch.label = "ready-to-implement";
           next.scratch.remove_labels = ["ready-to-spec", "needs-info", "wait-to-implement", "spec-ready-for-review"];
         }
+        const stateName = next.scratch.state as TriageState;
+        const rationale = buildRationale(stateName, this.ctx.issue);
+        next.scratch.comment = [
+          `**Triage decision:** ${stateName}`,
+          "",
+          rationale,
+          "",
+          "**Next step:** " + nextStep(stateName),
+        ].join("\n");
         next.scratch.step = "inspect_code";
         return next;
       }
@@ -76,22 +86,15 @@ export class TriageAgent extends BaseAgent<TriageResult> {
         const advance: Record<string, string> = {
           inspect_code: "inspect_code_vision",
           inspect_code_vision: "list_root",
-          list_root: "draft_comment",
+          list_root: "update_labels",
         };
-        next.scratch.step = advance[step] ?? "draft_comment";
+        next.scratch.step = advance[step] ?? "update_labels";
         return next;
       }
+      case "update_labels":
+        next.scratch.step = "draft_comment";
+        return next;
       case "draft_comment": {
-        // Build reporter-facing comment with rationale + next step.
-        const stateName = next.scratch.state as TriageState;
-        const rationale = buildRationale(stateName, this.ctx.issue);
-        next.scratch.comment = [
-          `**Triage decision:** ${stateName}`,
-          "",
-          rationale,
-          "",
-          "**Next step:** " + nextStep(stateName),
-        ].join("\n");
         next.scratch.step = "finish";
         return next;
       }

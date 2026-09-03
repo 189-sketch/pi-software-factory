@@ -16,18 +16,32 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { promises as fs } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const factoryDir = path.resolve(__dirname, "..", "..");
 const fixturesDir = path.join(factoryDir, "fixtures", "issues");
-const repoRoot = path.resolve(factoryDir, "..");
 
 test("triage classifies clear actionable issue as Ready to implement", async () => {
   const out = runCli(fixturesDir, "001-add-download-button.json");
   assert.equal(out.triage, "Ready to implement", `expected Ready to implement, got ${out.triage}`);
+});
+
+test("triage stage stops after producing the triage decision", async () => {
+  const tmpRepo = await fs.mkdtemp(path.join(os.tmpdir(), "factory-triage-stage-test-"));
+  try {
+    const out = runCliWithWorkdir(fixturesDir, "001-add-download-button.json", tmpRepo, "triage");
+    assert.equal(out.triage, "Ready to implement");
+    assert.equal(out.implementation, null);
+    assert.equal(out.review, null);
+    assert.equal(out.merged, false);
+  } finally {
+    await fs.rm(tmpRepo, { recursive: true, force: true });
+  }
 });
 
 test("triage classifies broad architecture issue as Ready to spec", async () => {
@@ -65,7 +79,7 @@ test("review-pr agent emits a verdict and severity-prefixed comments", async () 
 
 test("spec agent writes PRODUCT.md and TECH.md with stories", async () => {
   // Use a fresh slug directory under the parent repo so we don't pollute other tests.
-  const tmpRepo = await fs.mkdtemp(path.join(repoRoot, "factory-spec-test-"));
+  const tmpRepo = await fs.mkdtemp(path.join(os.tmpdir(), "factory-spec-test-"));
   try {
     const out = runCliWithWorkdir(fixturesDir, "002-architecture-redesign.json", tmpRepo);
     const slug = "issue-2-redesign-image-editing-state-management";
@@ -75,6 +89,7 @@ test("spec agent writes PRODUCT.md and TECH.md with stories", async () => {
     assert.ok(await exists(techPath), `expected TECH.md at ${techPath}`);
     const product = await fs.readFile(productPath, "utf-8");
     assert.ok(/^### US-\d+/m.test(product), "PRODUCT.md must contain at least one US- story");
+    assert.equal(out.specs.prUrl, "", "spec is committed with implementation and must not publish a fake standalone PR URL");
   } finally {
     await fs.rm(tmpRepo, { recursive: true, force: true });
   }
@@ -89,7 +104,7 @@ test("verify-behavior fans out one worker per story and aggregates", async () =>
 });
 
 test("review-pr emits severity-prefixed comments against a synthetic annotated diff", async () => {
-  const tmp = await fs.mkdtemp(path.join(repoRoot, "review-test-"));
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "review-test-"));
   try {
     // Synthetic diff with one TODO marker and one console.log so the agent has
     // both IMPORTANT and NIT findings to grade.
@@ -119,20 +134,6 @@ test("review-pr emits severity-prefixed comments against a synthetic annotated d
     // We don't have a `--stage review-pr` mode in the CLI yet; directly drive
     // the review-pr agent via tsx in-process through a small helper script.
     const helper = path.join(factoryDir, "scripts", "review-direct.mjs");
-    await fs.writeFile(helper, `
-      import { ReviewPrAgent } from "../src/agents/review-pr.js";
-      import { ConsoleLogger } from "../src/core/log.js";
-      const ctx = {
-        repo: { owner: "demo", name: "x", defaultBranch: "main", workdir: process.cwd() },
-        issue: { number: 99, title: "Test PR", body: "", labels: [], author: "t", url: "", createdAt: "", comments: [] },
-        logger: new ConsoleLogger(),
-        skillBody: "",
-        runId: "test",
-      };
-      const a = new ReviewPrAgent(ctx);
-      const r = await a.run();
-      console.log(JSON.stringify(r));
-    `, "utf-8");
     const out = execFileSync("node", [
       path.join(factoryDir, "node_modules", "tsx", "dist", "cli.mjs"),
       helper,
@@ -142,6 +143,7 @@ test("review-pr emits severity-prefixed comments against a synthetic annotated d
     assert.ok(review.body.length > 0);
     assert.ok(Array.isArray(review.comments));
     assert.ok(review.comments.length > 0, "expected at least one inline comment for the synthetic diff");
+    assert.ok(await exists(path.join(tmp, "review.json")), "review stage must persist review.json for publication");
     for (const c of review.comments) {
       assert.ok(/^(🚨|⚠️|💡|🧹) \[/.test(c.body), `comment body must start with severity prefix, got: ${c.body}`);
       assert.ok(c.path === "src/feature.ts", `path must match synthetic file, got ${c.path}`);
@@ -152,34 +154,56 @@ test("review-pr emits severity-prefixed comments against a synthetic annotated d
   }
 });
 
-test("improve-review-pr produces a decision (no_changes or update_review_pr)", async () => {
-  const out = runCliWithSpecialIssue("improve-review-pr");
-  assert.ok(["no_changes", "update_review_pr", "update_review_pr_local", "both"].includes(out.decision),
-    `expected valid decision, got ${out.decision}`);
+test("improve-review-pr makes no change when no real feedback exists", async () => {
+  const tmpRepo = await fs.mkdtemp(path.join(os.tmpdir(), "factory-improve-test-"));
+  try {
+    const out = runCliWithSpecialIssue(tmpRepo);
+    assert.equal(out.decision, "no_changes");
+    assert.deepEqual(out.learnings, []);
+    assert.equal(out.skillPrUrl, null);
+    assert.equal(await exists(path.join(tmpRepo, ".agents", "skills", "review-pr", "SKILL.md")), false,
+      "no-feedback runs must not rewrite the review skill");
+  } finally {
+    await fs.rm(tmpRepo, { recursive: true, force: true });
+  }
 });
 
 function runCli(fixturesDir, issueFile) {
-  return runCliWithWorkdir(fixturesDir, issueFile, repoRoot);
+  const workdir = mkdtempSync(path.join(os.tmpdir(), "factory-cli-test-"));
+  try {
+    return runCliWithWorkdir(fixturesDir, issueFile, workdir);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 }
 
-function runCliWithWorkdir(fixturesDir, issueFile, workdir) {
+function runCliWithWorkdir(fixturesDir, issueFile, workdir, stage) {
   const issuePath = path.join(fixturesDir, issueFile);
+  const stageArgs = stage ? ["--stage", stage] : [];
   const result = execFileSync("node", [
     path.join(factoryDir, "node_modules", "tsx", "dist", "cli.mjs"),
     path.join(factoryDir, "src", "cli", "run-issue.ts"),
     "--issue", issuePath,
-  ], { cwd: workdir, encoding: "utf-8", env: { ...process.env, NODE_NO_WARNINGS: "1", NODE_TEST: "1" }, stdio: ["ignore", "pipe", "ignore"] });
+    ...stageArgs,
+  ], { cwd: workdir, encoding: "utf-8", env: { ...process.env, NODE_NO_WARNINGS: "1", NODE_TEST: "1" }, stdio: ["ignore", "pipe", "pipe"] });
   return parseLastJson(String(result));
 }
 
-function runCliWithSpecialIssue(name) {
+function runCliWithSpecialIssue(workdir) {
   const issuePath = path.join(factoryDir, "fixtures", "issues", "_improve.json");
   const result = execFileSync("node", [
     path.join(factoryDir, "node_modules", "tsx", "dist", "cli.mjs"),
     path.join(factoryDir, "src", "cli", "run-issue.ts"),
     "--issue", issuePath,
     "--stage", "improve-review-pr",
-  ], { cwd: factoryDir, encoding: "utf-8", env: { ...process.env, NODE_NO_WARNINGS: "1", NODE_TEST: "1" }, stdio: ["ignore", "pipe", "ignore"] });
+  ], { cwd: workdir, encoding: "utf-8", env: {
+    ...process.env,
+    NODE_NO_WARNINGS: "1",
+    NODE_TEST: "1",
+    FACTORY_GH_REPO: "",
+    GH_TOKEN: "",
+    GITHUB_TOKEN: "",
+  }, stdio: ["ignore", "pipe", "pipe"] });
   return parseLastJson(String(result));
 }
 

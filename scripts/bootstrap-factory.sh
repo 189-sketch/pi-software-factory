@@ -125,20 +125,25 @@ echo " Driven repo:   $REPO"
 echo "================================================================"
 echo ""
 
-# 5. Clone the factory repo (we need the skills/, factory/, scripts/ files
-# the installer references — the installer resolves paths relative to its
-# own location, so we have to keep them together).
-TMP_INSTALLER=""
-WORK="$(mktemp -d)"
-trap 'rm -rf "$TMP_INSTALLER" "$WORK"' EXIT
-if ! git clone --depth 1 --branch "$FACTORY_BRANCH" \
-    "https://github.com/${FACTORY_REPO}.git" "$WORK/factory" >/dev/null 2>&1; then
-  echo "❌ Failed to clone ${FACTORY_REPO}"
-  exit 1
+# 5. Prefer the source tree containing this script. A standalone downloaded
+# bootstrap falls back to the published GitHub branch.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_FACTORY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [[ -f "$LOCAL_FACTORY_ROOT/scripts/install-factory.mjs" && -d "$LOCAL_FACTORY_ROOT/skills" ]]; then
+  INSTALLER="$LOCAL_FACTORY_ROOT/scripts/install-factory.mjs"
+  echo "Using local factory source: $LOCAL_FACTORY_ROOT"
+else
+  WORK="$(mktemp -d)"
+  trap 'rm -rf "$WORK"' EXIT
+  if ! git clone --depth 1 --branch "$FACTORY_BRANCH" \
+      "https://github.com/${FACTORY_REPO}.git" "$WORK/factory" >/dev/null 2>&1; then
+    echo "❌ Failed to clone ${FACTORY_REPO}"
+    exit 1
+  fi
+  INSTALLER="$WORK/factory/scripts/install-factory.mjs"
 fi
 
-# 6. Run installer from inside the cloned repo.
-INSTALLER="$WORK/factory/scripts/install-factory.mjs"
+# 6. Run installer from the selected source repo.
 INSTALL_FLAGS=(--mode "$MODE" --repo "$REPO")
 [[ "$YES" -eq 1 ]] && INSTALL_FLAGS+=(--non-interactive)
 node "$INSTALLER" "$TARGET" "${INSTALL_FLAGS[@]}"
@@ -175,12 +180,10 @@ if [[ "$MODE" == "local" || "$MODE" == "both" ]]; then
     echo "Local mode — fill in credentials:"
     read -rp "  GH_TOKEN (paste, hidden if possible): " GH_TOKEN_VAL
     read -rp "  ANTHROPIC_AUTH_TOKEN: " ANTHROPIC_VAL
-    read -rp "  ANTHROPIC_BASE_URL [https://api.minimaxi.com/anthropic]: " BASE_VAL
-    read -rp "  ANTHROPIC_MODEL [MiniMax-M3]: " MODEL_VAL
+    read -rp "  ANTHROPIC_BASE_URL (blank uses environment fallback): " BASE_VAL
+    read -rp "  ANTHROPIC_MODEL (blank uses environment fallback): " MODEL_VAL
     GH_TOKEN_VAL="${GH_TOKEN_VAL:-REPLACE_ME}"
     ANTHROPIC_VAL="${ANTHROPIC_VAL:-REPLACE_ME}"
-    BASE_VAL="${BASE_VAL:-https://api.minimaxi.com/anthropic}"
-    MODEL_VAL="${MODEL_VAL:-MiniMax-M3}"
     {
       echo "GH_TOKEN=$GH_TOKEN_VAL"
       echo "ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_VAL"

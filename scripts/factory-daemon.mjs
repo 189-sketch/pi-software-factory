@@ -17,6 +17,9 @@
  *   # Option 3: GitHub webhook (real-time, server required)
  *   node scripts/factory-daemon.mjs --webhook-port 8080
  *
+ *   # Option 4: run the daily review improvement loop once
+ *   node scripts/factory-daemon.mjs --daily
+ *
  * Run modes can be combined: --local-dir + --webhook-port, etc.
  *
  * The daemon handles each issue end-to-end (triage → spec → implement →
@@ -138,7 +141,7 @@ function loadDotEnv(file) {
     if (process.env[key] === undefined) {
       // Skip installer-style placeholder values (ghp_replace_me / sk-..._replace_me)
       // so fallback layers (gh-cli auth, ~/.claude/settings.json) still kick in.
-      if (/replace[_ ]?me|^ghp_$|^sk-(ant-)?$/i.test(val)) continue;
+      if (!val || /replace[_ ]?me|^ghp_$|^sk-(ant-)?$/i.test(val)) continue;
       process.env[key] = val;
       loaded++;
     }
@@ -162,6 +165,9 @@ if (envSources.length > 0) {
 
 const GH_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || "";
 const ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || "";
+const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || "";
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL || "";
+const LLM_CONFIGURED = Boolean(ANTHROPIC_AUTH_TOKEN && ANTHROPIC_BASE_URL && ANTHROPIC_MODEL);
 const FACTORY_GH_REPO = getEnv("FACTORY_GH_REPO", args.repo || "");
 const POLL_INTERVAL = Number(args.interval || process.env.FACTORY_POLL_INTERVAL || 30);
 const WEBHOOK_PORT = Number(args.webhookPort || process.env.FACTORY_WEBHOOK_PORT || 0);
@@ -182,6 +188,8 @@ function parseArgs(argv) {
     else if (a === "--workdir") out.workdir = argv[++i];
     else if (a === "--state-dir") out.stateDir = argv[++i];
     else if (a === "--dry-run") out.dry = argv[++i];
+    else if (a === "--once") out.once = true;
+    else if (a === "--daily") out.daily = true;
     else if (a === "--env-file") {
       // `--env-file path`, `--env-file=path`, or `--env-file -` to skip.
       const next = argv[i + 1];
@@ -235,7 +243,7 @@ function findOnPath(name) {
  * resolves inside the workdir.
  */
 async function copyFactorySkeleton(srcFactory, dstFactory) {
-  const dirsToCopy = ["src", "skills", "fixtures"];
+  const dirsToCopy = ["src", "skills", "fixtures", "scripts"];
   const filesToCopy = ["package.json", "tsconfig.json"];
   for (const d of dirsToCopy) {
     const s = path.join(srcFactory, d);
@@ -355,7 +363,7 @@ async function fetchNextFromGitHub() {
  * Process one issue end-to-end. Sets up a fresh workdir (clone of target
  * repo), invokes the factory CLI, and persists the outcome as state.
  */
-async function processIssue(issue) {
+async function processIssue(issue, stage = "") {
   const startedAt = new Date().toISOString();
   const issuePath = issue._issuePath || path.join(STATE_DIR, `issue-${issue.number}.json`);
   // Refresh issue JSON on disk for the CLI.
@@ -411,13 +419,13 @@ async function processIssue(issue) {
 
   const env = {
     ...process.env,
-    NODE_TEST: "1", // stub mode by default for the daemon (deterministic)
-    FACTORY_REMOTE_PATH: `https://x-access-token:${GH_TOKEN}@github.com/${FACTORY_GH_REPO}.git`,
+    FACTORY_AGENT_MODE: process.env.FACTORY_AGENT_MODE || (LLM_CONFIGURED ? "llm" : "stub"),
+    FACTORY_REMOTE_PATH: FACTORY_GH_REPO ? `https://github.com/${FACTORY_GH_REPO}.git` : "",
     FACTORY_GH_REPO,
     GH_TOKEN,
     ANTHROPIC_AUTH_TOKEN,
-    ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL || "https://api.minimaxi.com/anthropic",
-    ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL || "MiniMax-M3",
+    ANTHROPIC_BASE_URL,
+    ANTHROPIC_MODEL,
   };
 
   const cliPath = path.join(issueWorkdir, "factory", "src", "cli", "run-issue.ts");
@@ -433,23 +441,28 @@ async function processIssue(issue) {
   ];
   const tsxCli = tsxCandidates.find((p) => fsSync.existsSync(p))
     || tsxCandidates[0];
-  log("INFO", "starting-pipeline", { issue: issue.number, workdir: cliRoot, tsx: tsxCli });
+  log("INFO", "starting-pipeline", { issue: issue.number, workdir: issueWorkdir, factoryDir: cliRoot, tsx: tsxCli });
 
   let stdout = "", stderr = "";
   const exitCode = await new Promise((resolve) => {
-    const child = spawn("node", [
+    const childArgs = [
       tsxCli,
       cliPath,
       "--issue", issuePath,
-    ], { cwd: cliRoot, env, stdio: ["ignore", "pipe", "pipe"] });
+    ];
+    if (stage) childArgs.push("--stage", stage);
+    const child = spawn("node", childArgs, { cwd: issueWorkdir, env, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout.on("data", (b) => stdout += b);
     child.stderr.on("data", (b) => stderr += b);
-    child.on("exit", (code) => resolve(code ?? 0));
+    child.on("error", (error) => {
+      stderr += `failed to start pipeline: ${String(error)}\n`;
+      resolve(1);
+    });
+    child.on("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
   });
 
-  const out = (stdout + "\n" + stderr).trim().split("\n").filter((l) => l.trim().startsWith("{")).pop();
   let summary = {};
-  try { summary = JSON.parse(out); } catch {}
+  try { summary = JSON.parse(stdout.trim()); } catch {}
 
   const stateRecord = {
     number: issue.number,
@@ -457,36 +470,74 @@ async function processIssue(issue) {
     startedAt,
     finishedAt: new Date().toISOString(),
     exitCode,
-    workdir: cliRoot,
+    workdir: issueWorkdir,
     summary,
+    stdout: stdout.slice(-16_000),
+    stderr: stderr.slice(-16_000),
   };
-  fsSync.writeFileSync(path.join(STATE_DIR, `state-${issue.number}.json`), JSON.stringify(stateRecord, null, 2));
+  const stateName = stage ? `state-${stage}.json` : `state-${issue.number}.json`;
+  fsSync.writeFileSync(path.join(STATE_DIR, stateName), JSON.stringify(stateRecord, null, 2));
   log("INFO", "pipeline-done", { issue: issue.number, exitCode, summary });
 
   // Bookkeeping: write the permanent processed-N marker only when the
   // pipeline actually succeeded (exitCode 0). Remove the transient
   // fetched-N marker in either case so a fresh `fetched-` write can
   // appear on the next poll when this run failed.
-  const fetchedKey = `fetched-${issue.number}`;
-  const processedKey = `processed-${issue.number}`;
-  try { fsSync.unlinkSync(path.join(STATE_DIR, fetchedKey)); } catch {}
-  if (exitCode === 0) {
-    fsSync.writeFileSync(path.join(STATE_DIR, processedKey), new Date().toISOString());
+  if (!stage) {
+    const fetchedKey = `fetched-${issue.number}`;
+    const processedKey = `processed-${issue.number}`;
+    try { fsSync.unlinkSync(path.join(STATE_DIR, fetchedKey)); } catch {}
+    if (exitCode === 0) {
+      fsSync.writeFileSync(path.join(STATE_DIR, processedKey), new Date().toISOString());
+    }
   }
   return { ok: exitCode === 0, summary, stdout, stderr };
 }
 
+async function maybeRunDailyImprovement(force = false) {
+  const marker = path.join(STATE_DIR, "last-improve-review-pr");
+  try {
+    const lastRun = Date.parse(fsSync.readFileSync(marker, "utf-8").trim());
+    if (!force && Number.isFinite(lastRun) && Date.now() - lastRun < 24 * 60 * 60 * 1000) {
+      return { ok: true, skipped: true };
+    }
+  } catch {}
+
+  const result = await processIssue({
+    number: 0,
+    title: "Daily review feedback improvement",
+    body: "Inspect merged pull-request feedback from the last 24 hours and update review-pr only when a durable learning exists.",
+    labels: [],
+    author: "factory-daemon",
+    url: "",
+    createdAt: new Date().toISOString(),
+  }, "improve-review-pr");
+  if (result?.ok) fsSync.writeFileSync(marker, new Date().toISOString());
+  return result;
+}
+
 // === Polling loop ===
 async function pollingLoop() {
-  log("INFO", "daemon-start", { repo: FACTORY_GH_REPO || "(local)", interval: POLL_INTERVAL, localDir: LOCAL_DIR });
+  log("INFO", "daemon-start", {
+    repo: FACTORY_GH_REPO || "(local)",
+    interval: POLL_INTERVAL,
+    localDir: LOCAL_DIR,
+    once: args.once === true,
+    agentMode: process.env.FACTORY_AGENT_MODE || (LLM_CONFIGURED ? "llm" : "stub"),
+    llmBaseUrl: ANTHROPIC_BASE_URL || "(unset)",
+    llmModel: ANTHROPIC_MODEL || "(unset)",
+  });
   while (true) {
     try {
+      if (!args.once) await maybeRunDailyImprovement();
       const issue = await fetchNextIssue();
       if (issue) {
         log("INFO", "process-issue-start", { issue: issue.number });
         try {
           const result = await processIssue(issue);
           log("INFO", "process-issue-end", { issue: issue.number, ok: result?.ok });
+          if (args.once) return result?.ok ? 0 : 1;
+          if (!result?.ok) await sleep(POLL_INTERVAL * 1000);
         } catch (inner) {
           log("ERROR", "process-issue-failed", {
             issue: issue.number,
@@ -496,12 +547,16 @@ async function pollingLoop() {
           // Drop the in-flight marker so the next poll retries. Don't write
           // the permanent processed-N marker.
           try { fsSync.unlinkSync(path.join(STATE_DIR, `fetched-${issue.number}`)); } catch {}
+          if (args.once) return 1;
+          await sleep(POLL_INTERVAL * 1000);
         }
       } else {
+        if (args.once) return 0;
         await sleep(POLL_INTERVAL * 1000);
       }
     } catch (err) {
       log("ERROR", "loop-error", { error: String(err) });
+      if (args.once) return 1;
       await sleep(POLL_INTERVAL * 1000);
     }
   }
@@ -583,6 +638,13 @@ async function startWebhookServer() {
   } catch {}
   if (cleared > 0) log("INFO", "cleared-stale-fetched-markers", { cleared });
 
+  if (args.daily) {
+    const result = await maybeRunDailyImprovement(true);
+    process.exitCode = result?.ok ? 0 : 1;
+    return;
+  }
+
   if (WEBHOOK_PORT) await startWebhookServer();
-  await pollingLoop();
+  const exitCode = await pollingLoop();
+  if (args.once) process.exitCode = exitCode;
 })();

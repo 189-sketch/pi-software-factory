@@ -12,7 +12,7 @@
     "triage": "tsx src/cli/run-issue.ts --all",
     "issue": "tsx src/cli/run-issue.ts --issue",
     "webhook": "tsx src/cli/run-issue.ts --webhook 8080",
-    "test": "node --test src/__tests__/*.test.mjs",
+    "test": "node --import tsx --test --test-concurrency=1 src/__tests__/*.test.mjs src/__tests__/*.test.ts",
     "validate-review": "node scripts/validate-review.mjs",
     "annotate-diff": "node scripts/annotate-diff.mjs",
     "spec-check": "node scripts/spec-check.mjs",

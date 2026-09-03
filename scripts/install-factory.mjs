@@ -132,6 +132,9 @@ async function main() {
     if (existsSync(path.join(factoryRoot, "fixtures", "issues"))) {
       await copyDir(path.join(factoryRoot, "fixtures", "issues"), path.join(target, "factory", "fixtures", "issues"));
     }
+    if (existsSync(path.join(factoryRoot, "scripts"))) {
+      await copyDir(path.join(factoryRoot, "scripts"), path.join(target, "factory", "scripts"));
+    }
     console.log("✓ Copied factory/ (agent runner code)");
   } else {
     console.log("(no src/ dir in factory source; skipping agent code copy)");
@@ -146,8 +149,8 @@ async function main() {
     }
     console.log("\n  ⚠ Set these secrets on the target repo via `gh secret set`:");
     console.log("    gh secret set ANTHROPIC_AUTH_TOKEN --repo <owner>/<repo>");
-    console.log("    gh secret set ANTHROPIC_BASE_URL   --repo <owner>/<repo>     # optional, defaults to minimaxi");
-    console.log("    gh secret set ANTHROPIC_MODEL      --repo <owner>/<repo>     # optional, defaults to MiniMax-M3");
+    console.log("    gh secret set ANTHROPIC_BASE_URL   --repo <owner>/<repo>");
+    console.log("    gh secret set ANTHROPIC_MODEL      --repo <owner>/<repo>");
   }
 
   // 4. Local-specific: daemon + .env + (optional) service unit
@@ -210,7 +213,8 @@ if errorlevel 1 (
   exit /b 1
 )
 node .factory-daemon\\factory-daemon.mjs %*
-endlocal
+set "FACTORY_EXIT_CODE=%ERRORLEVEL%"
+endlocal & exit /b %FACTORY_EXIT_CODE%
 `;
     writeFileSync(path.join(daemonDir, "start.cmd"), startCmd);
     console.log("✓ Wrote start.sh + start.cmd");
@@ -219,36 +223,41 @@ endlocal
 # Secrets live HERE, not on GitHub. File is chmod 600.
 GH_TOKEN=ghp_replace_me
 ANTHROPIC_AUTH_TOKEN=sk-ant-replace_me
-ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic
-ANTHROPIC_MODEL=MiniMax-M3
+ANTHROPIC_BASE_URL=
+ANTHROPIC_MODEL=
+FACTORY_AGENT_MODE=llm
 FACTORY_GH_REPO=${repo || "owner/name"}
 FACTORY_POLL_INTERVAL=30
 `;
     writeFileSync(path.join(daemonDir, ".env.template"), envTpl);
-    // If interactive, collect secrets now.
-    if (!args.yes) {
+    // Never overwrite an existing credential file during upgrades.
+    const envPath = path.join(daemonDir, ".env");
+    if (existsSync(envPath)) {
+      console.log(`✓ Preserved existing ${envPath}`);
+    } else if (!args.yes) {
       console.log("\n  Provide GitHub + LLM credentials for the local daemon:");
       const rl = readline.createInterface({ input, output });
       const ghTok = (await rl.question("  GH_TOKEN (or blank to set later): ")).trim();
       const antTok = (await rl.question("  ANTHROPIC_AUTH_TOKEN (or blank to set later): ")).trim();
-      const baseUrl = (await rl.question("  ANTHROPIC_BASE_URL [https://api.minimaxi.com/anthropic]: ")).trim();
-      const model = (await rl.question("  ANTHROPIC_MODEL [MiniMax-M3]: ")).trim();
+      const baseUrl = (await rl.question("  ANTHROPIC_BASE_URL (or blank to use environment fallback): ")).trim();
+      const model = (await rl.question("  ANTHROPIC_MODEL (or blank to use environment fallback): ")).trim();
       rl.close();
       const realEnv = `# Local factory daemon secrets (chmod 600)
 GH_TOKEN=${ghTok || "ghp_replace_me"}
 ANTHROPIC_AUTH_TOKEN=${antTok || "sk-ant-replace_me"}
-ANTHROPIC_BASE_URL=${baseUrl || "https://api.minimaxi.com/anthropic"}
-ANTHROPIC_MODEL=${model || "MiniMax-M3"}
+ANTHROPIC_BASE_URL=${baseUrl}
+ANTHROPIC_MODEL=${model}
+FACTORY_AGENT_MODE=llm
 FACTORY_GH_REPO=${repo || "owner/name"}
 FACTORY_POLL_INTERVAL=30
 `;
-      writeFileSync(path.join(daemonDir, ".env"), realEnv);
-      chmodSync(path.join(daemonDir, ".env"), 0o600);
-      console.log(`✓ Wrote ${path.join(daemonDir, ".env")} (chmod 600)`);
+      writeFileSync(envPath, realEnv);
+      chmodSync(envPath, 0o600);
+      console.log(`✓ Wrote ${envPath} (chmod 600)`);
     } else {
-      writeFileSync(path.join(daemonDir, ".env"), envTpl.replace("ghp_replace_me", "REPLACE_ME"));
-      chmodSync(path.join(daemonDir, ".env"), 0o600);
-      console.log(`✓ Wrote template ${path.join(daemonDir, ".env")} — fill in before starting`);
+      writeFileSync(envPath, envTpl.replace("ghp_replace_me", "REPLACE_ME"));
+      chmodSync(envPath, 0o600);
+      console.log(`✓ Wrote template ${envPath} - fill in before starting`);
     }
 
     // systemd / launchd / Windows service unit (optional).
@@ -302,8 +311,8 @@ Secrets live in \`.factory-daemon/.env\` (chmod 600), never on GitHub.
 |---|---|
 | \`GH_TOKEN\` | \`gh\` CLI auth for pushing branches + creating PRs |
 | \`ANTHROPIC_AUTH_TOKEN\` | LLM API auth |
-| \`ANTHROPIC_BASE_URL\` | Anthropic-compatible base URL (default: minimaxi) |
-| \`ANTHROPIC_MODEL\` | Model id (default: MiniMax-M3) |
+| \`ANTHROPIC_BASE_URL\` | Anthropic-compatible base URL; required from an environment source |
+| \`ANTHROPIC_MODEL\` | Model id; required from an environment source |
 | \`FACTORY_GH_REPO\` | \`owner/name\` of the target repo |
 | \`FACTORY_POLL_INTERVAL\` | Seconds between polls (default: 30) |
 

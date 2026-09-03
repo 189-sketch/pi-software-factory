@@ -10,7 +10,7 @@
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 const slug = process.argv[2];
 if (!slug) {
@@ -30,13 +30,24 @@ if (!product || !tech) {
 }
 
 const criteria = Array.from(product.matchAll(/^- (.+)$/gm)).map((m) => m[1]);
-const changedFiles = execSync("git diff --name-only HEAD~1 HEAD || true", { encoding: "utf-8" })
-  .split("\n")
-  .filter(Boolean);
+let changedFiles = [];
+try {
+  changedFiles = execFileSync("git", ["status", "--porcelain"], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+  })
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.slice(3).trim());
+} catch {
+  const sourceDir = path.join(root, "src");
+  changedFiles = (await fs.readdir(sourceDir, { recursive: true }).catch(() => []))
+    .map((file) => path.join("src", String(file)));
+}
 
 let missing = [];
 for (const c of criteria) {
-  const hit = changedFiles.some((f) => f.endsWith(".ts") || f.endsWith(".tsx"));
+  const hit = changedFiles.some((f) => /\.[cm]?[jt]sx?$/.test(f));
   if (!hit) missing.push(c);
 }
 

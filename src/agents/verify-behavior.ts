@@ -65,8 +65,13 @@ export class VerifyBehaviorAgent extends BaseAgent<BehaviorVerificationResult> {
         break;
       }
       case "fan_out": {
-        const stories = (next.scratch.stories as Array<{ id: string; title: string }>) ?? [];
-        const results = stories.map((s) => simulateStory(s, this.mode));
+        let stories = (next.scratch.stories as Array<{ id: string; title: string }>) ?? [];
+        const simulate = process.env.NODE_TEST === "1" || process.env.FACTORY_AGENT_MODE === "stub";
+        if (simulate && stories.length === 0) {
+          stories = [{ id: `ISSUE-${this.ctx.issue.number}`, title: this.ctx.issue.title }];
+          next.scratch.stories = stories;
+        }
+        const results = simulate ? stories.map((s) => simulateStory(s, this.mode)) : [];
         next.scratch.results = results;
         next.scratch.step = "aggregate";
         break;
@@ -89,6 +94,7 @@ export class VerifyBehaviorAgent extends BaseAgent<BehaviorVerificationResult> {
     // Real verification: drive a Chromium browser against the running server.
     // On success we replace fallback screenshots with real Playwright captures.
     let realScreenshots: string[] = [];
+    let realServerVerified = false;
     try {
       const { realVerify } = await import("../core/real-verify.js");
       const evidenceDir = path.join(this.ctx.repo.workdir, "evidence");
@@ -96,11 +102,14 @@ export class VerifyBehaviorAgent extends BaseAgent<BehaviorVerificationResult> {
         workdir: this.ctx.repo.workdir,
         serverEntry: this.detectServerEntry(),
         storyId: stories[0]?.id ?? `issue-${this.ctx.issue.number}`,
-        method: "GET",
         path: "/",
         evidenceDir,
       });
-      realScreenshots = out.screenshots.map((s) => s.file);
+      realServerVerified = Boolean(out.serverUrl) && out.consoleErrors.length === 0 && out.pageErrors.length === 0;
+      realScreenshots = realServerVerified ? out.screenshots.map((s) => s.file) : [];
+      if (!realServerVerified) {
+        this.ctx.logger.warn(`[verify-behavior] real browser did not verify a healthy running server`);
+      }
     } catch (err) {
       this.ctx.logger.warn(`[verify-behavior] real browser skipped: ${err}`);
     }
@@ -122,7 +131,7 @@ export class VerifyBehaviorAgent extends BaseAgent<BehaviorVerificationResult> {
     const evidence = await materializeEvidence(evidenceDraft, this.ctx.repo.workdir);
     const total = results.length;
     const passed = results.filter((r) => r.passed).length;
-    const realCount = realScreenshots.length;
+    const realCount = realServerVerified ? realScreenshots.length : 0;
     let status: BehaviorVerificationResult["status"];
     if (this.mode === "reproduce") {
       if (passed === 0 && realCount === 0) status = "not-reproduced";

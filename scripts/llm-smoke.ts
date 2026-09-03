@@ -1,5 +1,5 @@
 /**
- * Smoke test for the LLM-mode triage agent against the real MiniMax-M3 endpoint.
+ * Smoke test for the LLM-mode triage agent against the environment-configured endpoint.
  *
  * Run with:
  *   npx tsx scripts/llm-smoke.ts
@@ -17,7 +17,7 @@ async function main() {
     process.exit(1);
   }
 
-  const fixturePath = "/Users/mustang/Projects/cloud-factory-demo/factory/fixtures/issues/001-add-download-button.json";
+  const fixturePath = path.join(process.cwd(), "fixtures", "issues", "001-add-download-button.json");
   const issue = JSON.parse(await fs.readFile(fixturePath, "utf-8"));
 
   const ctx = {
@@ -37,7 +37,6 @@ async function main() {
     parse: (text) => {
       // Find the last balanced JSON object in the text.
       let last: any = null;
-      const decoder = new TextDecoder();
       let depth = 0;
       let start = -1;
       for (let i = 0; i < text.length; i++) {

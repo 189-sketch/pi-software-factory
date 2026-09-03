@@ -14,8 +14,8 @@ import type {
  * It is a thin orchestrator over the write-product-spec and write-tech-spec
  * skills. In production the agent loop would delegate to a sub-agent that loads
  * each skill. In this implementation we model the same contract: plan the
- * stories, draft PRODUCT.md, then draft TECH.md against it, then open a specs
- * PR.
+ * stories, draft PRODUCT.md, then draft TECH.md against it. The implementation
+ * stage commits both specs and code in one reviewable PR.
  */
 export class SpecAgent extends BaseAgent<SpecPair> {
   readonly name = "spec";
@@ -31,8 +31,6 @@ export class SpecAgent extends BaseAgent<SpecPair> {
         return { kind: "tool", description: "draft PRODUCT.md", toolName: "write_file", args: { path: this.productPath(state), content: this.renderProduct(state) } };
       case "draft_tech":
         return { kind: "tool", description: "draft TECH.md", toolName: "write_file", args: { path: this.techPath(state), content: this.renderTech(state) } };
-      case "open_pr":
-        return { kind: "tool", description: "open specs PR (record PR URL in state)", toolName: "run_shell", args: { command: this.prCommand(state) } };
       case "comment":
         return { kind: "tool", description: "post handoff comment", toolName: "post_issue_comment", args: { body: this.handoffComment(state) } };
       case "finish":
@@ -50,10 +48,6 @@ export class SpecAgent extends BaseAgent<SpecPair> {
         next.scratch.step = "draft_tech";
         break;
       case "draft_tech":
-        next.scratch.step = "open_pr";
-        break;
-      case "open_pr":
-        next.scratch.specPrUrl = `https://github.com/${this.ctx.repo.owner}/${this.ctx.repo.name}/pull/${this.prNumberFor(state)}`;
         next.scratch.step = "comment";
         break;
       case "comment":
@@ -86,21 +80,15 @@ export class SpecAgent extends BaseAgent<SpecPair> {
   private techPath(state: AgentState): string {
     return `specs/${this.slug()}/TECH.md`;
   }
-  private prNumberFor(state: AgentState): number {
-    return 100 + this.ctx.issue.number;
-  }
-  private prCommand(state: AgentState): string {
-    return `echo "opened specs PR for issue #${this.ctx.issue.number}"`;
-  }
   private handoffComment(state: AgentState): string {
     return [
       `**Spec work complete.**`,
       ``,
       `- Product spec: \`specs/${this.slug()}/PRODUCT.md\``,
       `- Tech spec: \`specs/${this.slug()}/TECH.md\``,
-      `- Specs PR: ${state.scratch.specPrUrl ?? "(pending)"}`,
+      `- Delivery: specs will be committed with the implementation PR`,
       ``,
-      `Once reviewed and merged, apply \`Ready to implement\` to trigger the implementation agent.`,
+      `The implementation stage can now validate its changes against these specs.`,
     ].join("\n");
   }
   private renderProduct(state: AgentState): string {

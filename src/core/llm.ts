@@ -2,9 +2,9 @@
  * Real LLM adapter built on @mariozechner/pi-ai + @mariozechner/pi-agent-core.
  *
  * Reads:
- *   ANTHROPIC_BASE_URL   (defaults to https://api.minimaxi.com/anthropic)
+ *   ANTHROPIC_BASE_URL   (required; may be supplied by daemon env fallback)
  *   ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY
- *   ANTHROPIC_MODEL      (defaults to MiniMax-M3 or any anthropic claude-* id)
+ *   ANTHROPIC_MODEL      (required; ANTHROPIC_DEFAULT_HAIKU_MODEL is also accepted)
  *
  * Exposes:
  *   isLlmConfigured()      - true when an API key is present
@@ -13,7 +13,7 @@
  */
 import { Agent, type AgentTool } from "@mariozechner/pi-agent-core";
 import {
-  getModel,
+  getModels,
   streamSimple,
   type AssistantMessage,
   type Model,
@@ -22,11 +22,8 @@ import {
 } from "@mariozechner/pi-ai";
 import type { AgentContext } from "./types.js";
 
-const DEFAULT_BASE_URL = "https://api.minimaxi.com/anthropic";
-const DEFAULT_MODEL_ID = "claude-haiku-4-5";
-
 export function isLlmConfigured(): boolean {
-  return Boolean(getApiKey() && getModelId());
+  return Boolean(getApiKey() && getBaseUrl() && getModelId());
 }
 
 export function getApiKey(): string | undefined {
@@ -34,32 +31,57 @@ export function getApiKey(): string | undefined {
 }
 
 export function getModelId(): string | undefined {
-  return process.env.ANTHROPIC_MODEL || process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL || DEFAULT_MODEL_ID;
+  return process.env.ANTHROPIC_MODEL || process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL || undefined;
 }
 
-export function getBaseUrl(): string {
-  return process.env.ANTHROPIC_BASE_URL || DEFAULT_BASE_URL;
+export function getBaseUrl(): string | undefined {
+  return process.env.ANTHROPIC_BASE_URL || undefined;
+}
+
+export function getLlmRequestOptions(): { timeoutMs?: number; maxRetries?: number; maxTokens?: number } {
+  return {
+    timeoutMs: positiveInteger(process.env.FACTORY_LLM_TIMEOUT_MS ?? process.env.API_TIMEOUT_MS),
+    maxRetries: nonNegativeInteger(process.env.ANTHROPIC_MAX_RETRIES),
+    maxTokens: positiveInteger(process.env.ANTHROPIC_MAX_TOKENS),
+  };
 }
 
 /**
  * Construct an Anthropic-compatible Model pointing at the configured base URL.
- * We register it with pi-ai's API registry on the fly because MiniMax-M3 isn't a
- * known model id; we substitute it with a haiku id but override the baseUrl and
- * the headers so the proxy routes the request correctly.
+ * We use a registered Anthropic model only as the SDK capability schema, then
+ * replace the request model id and base URL with environment values.
  */
-export function buildAnthropicModel(modelId: string = getModelId()!): Model<"anthropic-messages"> {
-  const base = getModel("anthropic", "claude-haiku-4-5");
+export function buildAnthropicModel(modelId?: string): Model<"anthropic-messages"> {
+  const resolvedModelId = modelId || getModelId();
+  const baseUrl = getBaseUrl();
+  if (!baseUrl || !resolvedModelId) {
+    throw new Error("LLM configuration requires ANTHROPIC_BASE_URL and ANTHROPIC_MODEL (or ANTHROPIC_DEFAULT_HAIKU_MODEL)");
+  }
+  const base = getModels("anthropic").find((candidate) => candidate.api === "anthropic-messages");
+  if (!base) throw new Error("pi-ai has no Anthropic capability schema registered");
+  const requestOptions = getLlmRequestOptions();
   return {
     ...base,
-    id: modelId,
-    name: modelId,
-    baseUrl: getBaseUrl(),
+    id: resolvedModelId,
+    name: resolvedModelId,
+    baseUrl,
+    maxTokens: requestOptions.maxTokens ?? base.maxTokens,
     headers: {
       "x-api-key": getApiKey() ?? "",
       "anthropic-version": "2023-06-01",
     },
   };
 }
+
+export const streamWithLlmOptions: typeof streamSimple = (model, context, options = {}) => {
+  const configured = getLlmRequestOptions();
+  return streamSimple(model, context, {
+    ...options,
+    ...(configured.timeoutMs === undefined ? {} : { timeoutMs: configured.timeoutMs }),
+    ...(configured.maxRetries === undefined ? {} : { maxRetries: configured.maxRetries }),
+    ...(configured.maxTokens === undefined ? {} : { maxTokens: configured.maxTokens }),
+  });
+};
 
 /**
  * Convert our internal AgentTool shape (record args) to pi-agent-core's AgentTool
@@ -112,7 +134,7 @@ export async function runLlmLoop(opts: {
   }
   const agent = new Agent({
     getApiKey: async () => getApiKey() ?? undefined,
-    streamFn: streamSimple,
+    streamFn: streamWithLlmOptions,
     initialState: {
       systemPrompt: opts.systemPrompt,
       model: buildAnthropicModel(),
@@ -141,4 +163,16 @@ export async function runLlmLoop(opts: {
     }
   }
   return { text: finalText, messages, stopReason: "end_turn" };
+}
+
+function positiveInteger(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function nonNegativeInteger(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 0 ? value : undefined;
 }

@@ -90,7 +90,11 @@ function runShellTool(ctx: AgentContext): AgentTool {
       const cwd = args.cwd ? path.join(c.repo.workdir, String(args.cwd)) : c.repo.workdir;
       const timeoutMs = Number(args.timeoutMs ?? 120_000);
       try {
-        const { stdout, stderr } = await exec("bash", ["-lc", cmd], { cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 });
+        const shell = process.platform === "win32" ? "powershell.exe" : "bash";
+        const shellArgs = process.platform === "win32"
+          ? ["-NoProfile", "-NonInteractive", "-Command", cmd]
+          : ["-lc", cmd];
+        const { stdout, stderr } = await exec(shell, shellArgs, { cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 });
         return { stdout, stderr, exitCode: 0 };
       } catch (err: unknown) {
         const e = err as { stdout?: string; stderr?: string; code?: number };
@@ -140,20 +144,27 @@ function fetchIssueTool(ctx: AgentContext): AgentTool {
   };
 }
 
-/** Posts a comment on the issue. Real impl would call gh; demo impl writes to log. */
+/** Posts a comment on the issue when GitHub is configured. */
 function postIssueCommentTool(ctx: AgentContext): AgentTool {
   return {
     name: "post_issue_comment",
     description: "Post a markdown comment on the issue. Args: { body: string }",
     async execute(args, c) {
       const body = String(args.body ?? "");
+      const repo = process.env.FACTORY_GH_REPO;
+      const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+      if (repo && token && body) {
+        await exec("gh", ["issue", "comment", String(c.issue.number), "--repo", repo, "--body", body], {
+          env: { ...process.env, GH_TOKEN: token },
+        });
+      }
       c.logger.info(`[post_issue_comment] #${c.issue.number} bytes=${body.length}`);
       return { posted: true, body, issueNumber: c.issue.number };
     },
   };
 }
 
-/** Adds or removes labels on the issue. Real impl would call gh. */
+/** Adds or removes labels on the issue when GitHub is configured. */
 function updateIssueLabelsTool(ctx: AgentContext): AgentTool {
   return {
     name: "update_issue_labels",
@@ -161,6 +172,22 @@ function updateIssueLabelsTool(ctx: AgentContext): AgentTool {
     async execute(args, c) {
       const add = Array.isArray(args.add) ? (args.add as string[]) : [];
       const remove = Array.isArray(args.remove) ? (args.remove as string[]) : [];
+      const repo = process.env.FACTORY_GH_REPO;
+      const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+      if (repo && token) {
+        const env = { ...process.env, GH_TOKEN: token };
+        for (const label of add) {
+          await exec("gh", ["label", "create", label, "--repo", repo, "--color", "5319E7", "--force"], { env });
+          await exec("gh", ["issue", "edit", String(c.issue.number), "--repo", repo, "--add-label", label], { env });
+        }
+        for (const label of remove) {
+          try {
+            await exec("gh", ["issue", "edit", String(c.issue.number), "--repo", repo, "--remove-label", label], { env });
+          } catch {
+            // Removing a label that is not present is harmless.
+          }
+        }
+      }
       c.logger.info(`[update_issue_labels] add=${add.join(",")} remove=${remove.join(",")}`);
       return { added: add, removed: remove };
     },
@@ -176,12 +203,6 @@ export function commitAndPushTool(ctx: AgentContext): AgentTool {
       const branch = String(args.branch ?? "feature/auto");
       const message = String(args.message ?? "factory commit");
       const files = Array.isArray(args.files) ? (args.files as string[]) : undefined;
-      // Skip cleanly when the workdir is not a git repository (test fixtures).
-      try {
-        await exec("git", ["rev-parse", "--git-dir"], { cwd: c.repo.workdir });
-      } catch {
-        return { skipped: true, reason: "not a git repository", branch, commitSha: "", ok: false };
-      }
       const result = await commitAndPush({ workdir: c.repo.workdir, branch, message, files });
       return result;
     },

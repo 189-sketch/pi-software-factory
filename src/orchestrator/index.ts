@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
+import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 import { ConsoleLogger } from "../core/log.js";
 import { SkillLoader } from "../core/skill.js";
 import { newRunId } from "../core/agent.js";
@@ -12,9 +14,12 @@ import { slugify } from "../agents/spec.js";
 import { ReviewPrAgent } from "../agents/review-pr.js";
 import { VerifyBehaviorAgent } from "../agents/verify-behavior.js";
 import { ImproveReviewPrAgent } from "../agents/improve-review-pr.js";
-import { commitAndPushTool, openPullRequestTool } from "../core/tools.js";
+import { mergePullRequest } from "../github/git.js";
 import { runLlmAgent, resolveAgentMode, type AgentMode } from "../core/llm-agent.js";
+import { commitAndPushTool, defaultTools, openPullRequestTool } from "../core/tools.js";
 import type { ImplementationResult } from "../core/types.js";
+
+const exec = promisify(execFile);
 
 /**
  * FactoryOrchestrator wires the six agents into a complete pipeline.
@@ -49,6 +54,19 @@ export class FactoryOrchestrator extends EventEmitter {
 
   private readonly repoMeta: { owner: string; name: string; defaultBranch: string; workdir: string };
 
+  /** Runs only triage and records the resulting issue state. */
+  async runTriage(issue: Issue): Promise<FactoryIssueState> {
+    const runId = newRunId();
+    const mode = resolveAgentMode();
+    this.logger.info(`start triage for issue #${issue.number} runId=${runId} mode=${mode}`);
+    const skill = await this.loader.load("triage");
+    const state: FactoryIssueState = { issue, merged: false };
+    this.state.set(issue.number, state);
+    state.triage = await this.executeTriage(issue, skill.body, runId, mode);
+    this.emit("triage", { issueNumber: issue.number, result: state.triage });
+    return state;
+  }
+
   /** Runs the full pipeline for an issue from triage through review. */
   async runForIssue(issue: Issue): Promise<FactoryIssueState> {
     const runId = newRunId();
@@ -74,31 +92,8 @@ export class FactoryOrchestrator extends EventEmitter {
     const state: FactoryIssueState = { issue, merged: false };
     this.state.set(issue.number, state);
 
-    // 1. Triage (always). LLM mode uses the real MiniMax-M3 via pi-agent-core.
-    if (mode === "llm") {
-      const ctx = baseCtx("triage");
-      state.triage = await runLlmAgent<TriageResult>({
-        name: "triage",
-        ctx,
-        systemPrompt: `You are the triage agent for the multi-agent software factory.\n\n${skillBodies.triage.body}\n\nBias toward action: when the issue has concrete acceptance criteria and a bounded scope, classify as "Ready to implement". Only classify as "Needs info" when truly ambiguous; "Wait to implement" only when the request is off-topic or duplicates existing work. The demo target is a small text-based image editor (per vision.md); image export, editing endpoints, and similar features fit the roadmap.`,
-        userPrompt: [
-          `Triage issue #${issue.number}: ${issue.title}`,
-          ``,
-          `Body / acceptance criteria:`,
-          issue.body,
-          ``,
-          `Use the read_file tool to inspect the repo (read roadmap.md / vision.md if present). Then return ONLY a single JSON object (no prose, no markdown). Start with '{' and finish with '}':`,
-          ``,
-          `{"state":"Ready to implement","label":"ready-to-implement","remove_labels":["ready-to-spec","needs-info","wait-to-implement","spec-ready-for-review"],"comment":"Triage decision: Ready to implement."}`,
-          ``,
-          `No commentary, no code fences — only the raw JSON.`,
-        ].join("\n"),
-        parse: parseTriageJson,
-      });
-    } else {
-      const triageAgent = new TriageAgent(baseCtx("triage"));
-      state.triage = await triageAgent.run();
-    }
+    // 1. Triage (always). LLM mode uses the configured Anthropic-compatible model.
+    state.triage = await this.executeTriage(issue, skillBodies.triage.body, runId, mode);
     this.emit("triage", { issueNumber: issue.number, result: state.triage });
 
     if (state.triage.state === "Wait to implement" || state.triage.state === "Needs info") {
@@ -141,40 +136,107 @@ export class FactoryOrchestrator extends EventEmitter {
         systemPrompt: `You are the implementation agent for the multi-agent software factory.\n\n${skillBody}\n\nYou MUST satisfy every acceptance criterion stated in the issue body.`,
         userPrompt,
         parse: parseImplementationJson,
+        extraTools: [
+          ...defaultTools(implCtx),
+          commitAndPushTool(implCtx),
+          openPullRequestTool(implCtx, this.remotePath),
+        ],
       });
-      // Wire verify-behavior so evidence PNGs land in evidence/ on disk.
-      try {
-        const verify = await new VerifyBehaviorAgent(implCtx, "verify").run();
-        state.implementation = { ...state.implementation, behaviorVerification: verify, issueNumber: issue.number };
-      } catch (err) {
-        this.logger.warn(`verify-behavior skipped: ${err}`);
-      }
+      state.implementation = {
+        ...state.implementation,
+        issueNumber: issue.number,
+        branch: state.implementation.branch || `feature/issue-${issue.number}-${slugify(issue.title)}`,
+      };
     } else {
       const implAgent = new ImplementationAgent(implCtx, this.remotePath);
       state.implementation = await implAgent.run();
-      // Run verify-behavior in stub mode too so evidence/ is always populated.
-      try {
-        const verify = await new VerifyBehaviorAgent(implCtx, "verify").run();
-        state.implementation = { ...state.implementation, behaviorVerification: verify, issueNumber: issue.number };
-      } catch (err) {
-        this.logger.warn(`verify-behavior skipped: ${err}`);
-      }
     }
     this.emit("implementation", { issueNumber: issue.number, result: state.implementation });
 
     // 4. Review PR
+    await this.prepareReviewArtifacts(state.implementation);
     const reviewCtx = baseCtx("reviewPr");
     const reviewAgent = new ReviewPrAgent(reviewCtx);
     state.review = await reviewAgent.run();
     this.emit("review", { issueNumber: issue.number, result: state.review });
 
-    // 5. Mark merged iff approved and verified
+    // 5. Verify behavior only after review approval.
     if (state.review.verdict === "APPROVE") {
-      state.merged = true;
-      this.emit("merged", { issueNumber: issue.number });
+      const verify = await new VerifyBehaviorAgent(implCtx, "verify").run();
+      state.implementation = { ...state.implementation, behaviorVerification: verify };
+      this.emit("verify", { issueNumber: issue.number, result: verify });
+
+      // 6. Merge only after strict verification and remote confirmation.
+      if (verify.status === "verified" && this.remotePath && state.implementation.prUrl) {
+        await mergePullRequest({
+          workdir: this.workdir,
+          remotePath: this.remotePath,
+          prUrl: state.implementation.prUrl,
+        });
+        state.merged = true;
+        this.emit("merged", { issueNumber: issue.number });
+      }
     }
 
     return state;
+  }
+
+  private async prepareReviewArtifacts(implementation: ImplementationResult): Promise<void> {
+    let rawDiff = "";
+    try {
+      const { stdout: root } = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: this.workdir });
+      if (path.resolve(root.trim()) !== path.resolve(this.workdir)) throw new Error("workdir is not a repository root");
+      const { stdout } = await exec("git", [
+        "diff",
+        "--unified=3",
+        `origin/${this.repoMeta.defaultBranch}...HEAD`,
+      ], { cwd: this.workdir, maxBuffer: 16 * 1024 * 1024 });
+      rawDiff = stdout;
+    } catch (err) {
+      this.logger.warn(`review diff unavailable: ${String(err).split("\n")[0]}`);
+    }
+    await fs.writeFile(path.join(this.workdir, "pr_diff.txt"), annotateDiff(rawDiff), "utf-8");
+    await fs.writeFile(path.join(this.workdir, "pr_description.txt"), implementation.comment || "", "utf-8");
+  }
+
+  private async executeTriage(
+    issue: Issue,
+    skillBody: string,
+    runId: string,
+    mode: AgentMode,
+  ): Promise<TriageResult> {
+    const ctx: AgentContext = {
+      repo: this.repoMeta,
+      issue,
+      logger: this.logger,
+      skillBody,
+      runId,
+    };
+    if (mode !== "llm") {
+      return new TriageAgent(ctx).run();
+    }
+    const result = await runLlmAgent<TriageResult>({
+      name: "triage",
+      ctx,
+      systemPrompt: `You are the triage agent for the multi-agent software factory.\n\n${skillBody}\n\nBias toward action: when the issue has concrete acceptance criteria and a bounded scope, classify as "Ready to implement". Only classify as "Needs info" when truly ambiguous; "Wait to implement" only when the request is off-topic or duplicates existing work.`,
+      userPrompt: [
+        `Triage issue #${issue.number}: ${issue.title}`,
+        ``,
+        `Body / acceptance criteria:`,
+        issue.body,
+        ``,
+        `Use the read_file tool to inspect the repository when useful. Return only one JSON object:`,
+        `{"state":"Ready to implement","label":"ready-to-implement","remove_labels":["ready-to-spec","needs-info","wait-to-implement","spec-ready-for-review"],"comment":"Triage decision: Ready to implement."}`,
+      ].join("\n"),
+      parse: parseTriageJson,
+    });
+    const tools = defaultTools(ctx);
+    await tools.find((tool) => tool.name === "update_issue_labels")!.execute({
+      add: [result.label],
+      remove: result.remove_labels,
+    }, ctx);
+    await tools.find((tool) => tool.name === "post_issue_comment")!.execute({ body: result.comment }, ctx);
+    return result;
   }
 
   /** Runs just the verify-behavior agent (called by implementation agent or review). */
@@ -194,6 +256,7 @@ export class FactoryOrchestrator extends EventEmitter {
   /** Runs the daily outer-loop improve-review-pr agent. */
   async runImproveReviewPr(issue: Issue) {
     const skill = await this.loader.load("improve-review-pr");
+    const reviewSkill = await this.loader.load("review-pr");
     const ctx: AgentContext = {
       repo: this.repoMeta,
       issue,
@@ -201,7 +264,7 @@ export class FactoryOrchestrator extends EventEmitter {
       skillBody: skill.body,
       runId: newRunId(),
     };
-    const agent = new ImproveReviewPrAgent(ctx);
+    const agent = new ImproveReviewPrAgent(ctx, this.remotePath, reviewSkill.body);
     return agent.run();
   }
 
@@ -322,4 +385,33 @@ function parseImplementationJson(text: string): ImplementationResult {
     validation: [],
     comment: typeof last.comment === "string" ? last.comment : "",
   };
+}
+
+function annotateDiff(patch: string): string {
+  const output: string[] = [];
+  let oldLine: number | null = null;
+  let newLine: number | null = null;
+  for (const raw of patch.split("\n")) {
+    const hunk = raw.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (hunk) {
+      oldLine = Number(hunk[1]);
+      newLine = Number(hunk[2]);
+      output.push(raw);
+    } else if (raw.startsWith("--- ") || raw.startsWith("+++ ") || oldLine === null || newLine === null) {
+      output.push(raw);
+    } else if (raw.startsWith("-")) {
+      output.push(`[OLD:${oldLine}] ${raw.slice(1)}`);
+      oldLine += 1;
+    } else if (raw.startsWith("+")) {
+      output.push(`[NEW:${newLine}] ${raw.slice(1)}`);
+      newLine += 1;
+    } else if (raw.startsWith(" ")) {
+      output.push(`[OLD:${oldLine},NEW:${newLine}] ${raw.slice(1)}`);
+      oldLine += 1;
+      newLine += 1;
+    } else {
+      output.push(raw);
+    }
+  }
+  return output.join("\n");
 }

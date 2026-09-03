@@ -10,7 +10,7 @@ REM Equivalent to bootstrap-factory.sh but for Windows cmd.
 setlocal EnableExtensions EnableDelayedExpansion
 set "FACTORY_REPO=189-sketch/pi-software-factory"
 set "FACTORY_BRANCH=main"
-set "INSTALL_URL=https://raw.githubusercontent.com/%FACTORY_REPO%/%FACTORY_BRANCH%/scripts/install-factory.mjs"
+for %%I in ("%~dp0..") do set "LOCAL_FACTORY_ROOT=%%~fI"
 
 set "TARGET="
 set "MODE="
@@ -114,9 +114,14 @@ echo  Driven repo:   %REPO%
 echo ================================================================
 echo.
 
-REM --- clone factory repo (we need the skills/, factory/, scripts/ files
-REM     the installer references — the installer resolves paths relative
-REM     to its own location, so we keep them together).
+REM --- Prefer the source tree containing this script. A standalone downloaded
+REM     bootstrap falls back to the published GitHub branch.
+if exist "%LOCAL_FACTORY_ROOT%\scripts\install-factory.mjs" if exist "%LOCAL_FACTORY_ROOT%\skills" (
+  set "INSTALLER=%LOCAL_FACTORY_ROOT%\scripts\install-factory.mjs"
+  echo Using local factory source: %LOCAL_FACTORY_ROOT%
+  goto installer_ready
+)
+
 set "WORK=%TEMP%\factory-bootstrap-%RANDOM%"
 git clone --depth 1 --branch %FACTORY_BRANCH% ^
   "https://github.com/%FACTORY_REPO%.git" "%WORK%\factory" >nul 2>nul
@@ -125,8 +130,10 @@ if errorlevel 1 (
   exit /b 1
 )
 
-REM --- run installer from inside the cloned repo ---
 set "INSTALLER=%WORK%\factory\scripts\install-factory.mjs"
+:installer_ready
+
+REM --- run installer from the selected source repo ---
 set "INSTALL_FLAGS=--mode %MODE% --repo %REPO%"
 if "%YES%"=="1" set "INSTALL_FLAGS=%INSTALL_FLAGS% --non-interactive"
 node "%INSTALLER%" "%TARGET%" %INSTALL_FLAGS%
@@ -169,10 +176,8 @@ echo.
 echo Local mode - fill in credentials:
 set /p "GH_TOKEN_VAL=  GH_TOKEN (paste): "
 set /p "ANTHROPIC_VAL=  ANTHROPIC_AUTH_TOKEN: "
-set /p "BASE_VAL=       ANTHROPIC_BASE_URL [https://api.minimaxi.com/anthropic]: "
-if "%BASE_VAL%"=="" set "BASE_VAL=https://api.minimaxi.com/anthropic"
-set /p "MODEL_VAL=      ANTHROPIC_MODEL [MiniMax-M3]: "
-if "%MODEL_VAL%"=="" set "MODEL_VAL=MiniMax-M3"
+set /p "BASE_VAL=       ANTHROPIC_BASE_URL (blank uses environment fallback): "
+set /p "MODEL_VAL=      ANTHROPIC_MODEL (blank uses environment fallback): "
 (
   echo GH_TOKEN=%GH_TOKEN_VAL%
   echo ANTHROPIC_AUTH_TOKEN=%ANTHROPIC_VAL%

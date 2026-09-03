@@ -1,26 +1,42 @@
 #!/usr/bin/env node
-/**
- * Collects the last 24h of review-agent interactions into a feedback corpus.
- *
- * Usage: node factory/scripts/collect-feedback.mjs
- *
- * Writes JSON to stdout in the shape:
- *   { prs: number, items: Array<{ text: string }> }
- *
- * In production this queries the GitHub API; for the demo it returns a small
- * deterministic corpus so improve-review-pr has signal to learn from.
- */
-const corpus = {
-  prs: 12,
-  items: [
-    { text: "agreed on the security finding, fixed before merge" },
-    { text: "lgtm on the typo nit" },
-    { text: "the console.log nit was helpful, removed" },
-    { text: "agreed, the TODO marker was real" },
-    { text: "this NIT was noise, please demote" },
-    { text: "with adjustment: the suggestion block needs the missing else branch" },
-    { text: "disagree, the unused import is intentional for the public API surface" },
-    { text: "good catch on the missing error handling, fixed" },
-  ],
-};
-process.stdout.write(JSON.stringify(corpus));
+import { execFileSync } from "node:child_process";
+
+/** Collect human review comments from PRs merged in the last 24 hours. */
+const repo = process.env.FACTORY_GH_REPO?.trim();
+const token = (process.env.GH_TOKEN || process.env.GITHUB_TOKEN)?.trim();
+
+if (!repo || !token) {
+  process.stdout.write(JSON.stringify({ prs: 0, items: [] }));
+  process.exit(0);
+}
+
+const raw = execFileSync("gh", [
+  "pr", "list",
+  "--repo", repo,
+  "--state", "merged",
+  "--limit", "50",
+  "--json", "number,mergedAt,comments,reviews,url",
+], {
+  encoding: "utf-8",
+  env: { ...process.env, GH_TOKEN: token },
+  stdio: ["ignore", "pipe", "pipe"],
+});
+
+const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+const prs = JSON.parse(raw).filter((pr) => {
+  const mergedAt = Date.parse(pr.mergedAt || "");
+  return Number.isFinite(mergedAt) && mergedAt >= cutoff;
+});
+const items = [];
+for (const pr of prs) {
+  for (const comment of pr.comments || []) {
+    const text = String(comment.body || "").trim();
+    if (text) items.push({ pr: pr.number, url: pr.url, source: "comment", text });
+  }
+  for (const review of pr.reviews || []) {
+    const text = String(review.body || "").trim();
+    if (text) items.push({ pr: pr.number, url: pr.url, source: "review", text });
+  }
+}
+
+process.stdout.write(JSON.stringify({ prs: prs.length, items }));

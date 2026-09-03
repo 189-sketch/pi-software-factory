@@ -8,8 +8,8 @@
  * The two modes produce the same structured result; tests don't care which.
  */
 import { Agent } from "@mariozechner/pi-agent-core";
-import { streamSimple, type Model } from "@mariozechner/pi-ai";
-import { toAgentTools, isLlmConfigured, buildAnthropicModel } from "./llm.js";
+import { type Model } from "@mariozechner/pi-ai";
+import { toAgentTools, isLlmConfigured, buildAnthropicModel, streamWithLlmOptions } from "./llm.js";
 import type { AgentContext } from "./types.js";
 import { defaultTools } from "./tools.js";
 
@@ -39,7 +39,7 @@ export async function runLlmAgent<TResult>(opts: LlmAgentOpts<TResult>): Promise
   const model: Model<"anthropic-messages"> = buildAnthropicModel();
   const agent = new Agent({
     getApiKey: async () => process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || undefined,
-    streamFn: streamSimple,
+    streamFn: streamWithLlmOptions,
     initialState: {
       systemPrompt: opts.systemPrompt,
       model,
@@ -53,7 +53,7 @@ export async function runLlmAgent<TResult>(opts: LlmAgentOpts<TResult>): Promise
   const messages = (agent.state.messages as unknown[]) ?? [];
   let finalText = "";
   for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i] as { role?: string; content?: unknown };
+    const m = messages[i] as { role?: string; content?: unknown; stopReason?: string; errorMessage?: string };
     if (m.role === "assistant") {
       if (typeof m.content === "string") {
         finalText = m.content;
@@ -67,6 +67,16 @@ export async function runLlmAgent<TResult>(opts: LlmAgentOpts<TResult>): Promise
         if (finalText) break;
       }
     }
+  }
+  if (!finalText) {
+    const last = messages.at(-1) as { stopReason?: string; errorMessage?: string } | undefined;
+    throw new Error([
+      `LLM returned no assistant text`,
+      `model=${model.id}`,
+      `baseUrl=${model.baseUrl}`,
+      `stopReason=${last?.stopReason ?? "unknown"}`,
+      `providerError=${last?.errorMessage ?? agent.state.errorMessage ?? "unknown"}`,
+    ].join("; "));
   }
   return opts.parse(finalText);
 }

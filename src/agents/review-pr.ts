@@ -39,8 +39,8 @@ export class ReviewPrAgent extends BaseAgent<ReviewResult> {
         return { kind: "tool", description: "read PR description", toolName: "read_file", args: { path: "pr_description.txt" } };
       case "analyze":
         return { kind: "tool", description: "analyze diff signals", toolName: "run_shell", args: { command: "echo analyzed" } };
-      case "validate":
-        return { kind: "tool", description: "validate review.json", toolName: "run_shell", args: { command: "node factory/scripts/validate-review.mjs" } };
+      case "write_review":
+        return { kind: "tool", description: "persist structured review", toolName: "write_file", args: { path: "review.json", content: JSON.stringify(resultFor(state.scratch.findings), null, 2) } };
       case "finish":
         return { kind: "finish", description: "review done" };
       default:
@@ -63,10 +63,10 @@ export class ReviewPrAgent extends BaseAgent<ReviewResult> {
       case "analyze": {
         const findings = deriveFindings(next.scratch.diff as string);
         next.scratch.findings = findings;
-        next.scratch.step = "validate";
+        next.scratch.step = "write_review";
         break;
       }
-      case "validate":
+      case "write_review":
         next.scratch.step = "finish";
         break;
       default:
@@ -76,19 +76,23 @@ export class ReviewPrAgent extends BaseAgent<ReviewResult> {
   }
 
   protected async finalize(state: AgentState): Promise<ReviewResult> {
-    const findings = (state.scratch.findings as Array<{ severity: "CRITICAL" | "IMPORTANT" | "SUGGESTION" | "NIT"; summary: string; path: string; line: number; side: "LEFT" | "RIGHT" }>) ?? [];
-    const body = buildBody(findings);
-    const verdict = verdictFor(findings);
-    const comments: ReviewComment[] = findings
-      .filter((f) => f.path && f.line > 0)
-      .map((f) => ({
-        path: f.path,
-        line: f.line,
-        side: f.side,
-        body: `${ALLOWED_PREFIXES[severityIndex(f.severity)]} ${f.summary}`,
-      }));
-    return { verdict, body, comments };
+    return resultFor(state.scratch.findings);
   }
+}
+
+type Finding = { severity: "CRITICAL" | "IMPORTANT" | "SUGGESTION" | "NIT"; summary: string; path: string; line: number; side: "LEFT" | "RIGHT" };
+
+function resultFor(value: unknown): ReviewResult {
+  const findings = (value as Finding[] | undefined) ?? [];
+  const comments: ReviewComment[] = findings
+    .filter((finding) => finding.path && finding.line > 0)
+    .map((finding) => ({
+      path: finding.path,
+      line: finding.line,
+      side: finding.side,
+      body: `${ALLOWED_PREFIXES[severityIndex(finding.severity)]} ${finding.summary}`,
+    }));
+  return { verdict: verdictFor(findings), body: buildBody(findings), comments };
 }
 
 function severityIndex(s: string): number {

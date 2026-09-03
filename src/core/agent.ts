@@ -85,12 +85,9 @@ export abstract class BaseAgent<TResult> {
   }
 }
 
-export interface AgentPlan {
-  kind: "tool" | "finish";
-  description: string;
-  toolName?: string;
-  args?: Record<string, unknown>;
-}
+export type AgentPlan =
+  | { kind: "tool"; description: string; toolName: string; args: Record<string, unknown> }
+  | { kind: "finish"; description: string };
 
 export interface AgentState {
   scratch: Record<string, unknown>;

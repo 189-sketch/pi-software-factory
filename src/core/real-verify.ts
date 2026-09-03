@@ -32,7 +32,7 @@ export async function realVerify(opts: RealVerifyOpts): Promise<RealVerifyResult
   const errors = { console: [] as string[], page: [] as string[] };
   const screenshots: Array<{ file: string; caption: string }> = [];
   let serverUrl: string | undefined;
-  let child: { close: () => Promise<void> } | null = null;
+  let child: { url: string; close: () => Promise<void> } | null = null;
 
   // Try to boot the implementation server with a 2-second strict timeout.
   // If it doesn't print PORT=… quickly, give up and use about:blank.

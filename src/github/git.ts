@@ -14,10 +14,27 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 
+export interface CommandResult {
+  stdout: string;
+  stderr: string;
+}
+
+export type CommandRunner = (
+  command: string,
+  args: string[],
+  options?: { cwd?: string },
+) => Promise<CommandResult>;
+
+const runCommand: CommandRunner = async (command, args, options = {}) => {
+  const result = await exec(command, args, options);
+  return { stdout: String(result.stdout ?? ""), stderr: String(result.stderr ?? "") };
+};
+
 export interface CommitResult {
   branch: string;
   commitSha: string;
   ok: boolean;
+  skipped?: boolean;
 }
 
 export interface PullRequestResult {
@@ -25,6 +42,13 @@ export interface PullRequestResult {
   prUrl: string;
   headSha: string;
   baseBranch: string;
+  skipped?: boolean;
+}
+
+export interface MergeResult {
+  merged: boolean;
+  mergeCommitSha: string;
+  mergedAt: string;
 }
 
 /**
@@ -38,9 +62,13 @@ export async function commitAndPush(opts: {
   files?: string[];
 }): Promise<CommitResult> {
   const { workdir, branch, message } = opts;
-  // If workdir is not a git repo, skip cleanly (e.g. test fixtures).
+  // Only operate when workdir itself is the repository root. Git otherwise
+  // walks into parent directories, which can mutate the factory source repo.
   try {
-    await exec("git", ["rev-parse", "--git-dir"], { cwd: workdir });
+    const { stdout } = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: workdir });
+    if (path.resolve(stdout.trim()) !== path.resolve(workdir)) {
+      return { branch, commitSha: "", ok: false, skipped: true };
+    }
   } catch {
     return { branch, commitSha: "", ok: false, skipped: true };
   }
@@ -53,7 +81,7 @@ export async function commitAndPush(opts: {
   // Allow empty commits (e.g. when only a spec file changed and the impl agent
   // already committed earlier); otherwise commit changes.
   try {
-    await exec("git", ["commit", "-m", message + "\n\nCo-Authored-By: Cloud Factory Agent <factory@cloud-demo.local>"], { cwd: workdir });
+    await exec("git", ["commit", "-m", message], { cwd: workdir });
   } catch (err: unknown) {
     const e = err as { stderr?: string };
     if (!/nothing to commit/i.test(e.stderr ?? "")) throw err;
@@ -79,13 +107,14 @@ export async function openPullRequest(opts: {
   baseBranch: string;
   title: string;
   body: string;
-}): Promise<PullRequestResult> {
+}, run: CommandRunner = runCommand): Promise<PullRequestResult> {
   const { workdir, remotePath, branch, baseBranch, title, body } = opts;
   // If workdir is not a git repo, return a synthesized result so callers
   // (especially tests) can still observe a stable outcome. Use a github.com-
   // style URL so downstream assertions still look like a real PR.
   try {
-    await exec("git", ["rev-parse", "--git-dir"], { cwd: workdir });
+    const { stdout } = await run("git", ["rev-parse", "--show-toplevel"], { cwd: workdir });
+    if (path.resolve(stdout.trim()) !== path.resolve(workdir)) throw new Error("workdir is not repository root");
   } catch {
     const safeBranch = branch.replace(/[^A-Za-z0-9._/-]/g, "-");
     return {
@@ -96,19 +125,24 @@ export async function openPullRequest(opts: {
       skipped: true,
     };
   }
+  const origin = await readOrigin(workdir, remotePath, run);
+  const githubRepo = parseGitHubRepo(origin) ?? parseGitHubRepo(remotePath);
+  if (githubRepo) {
+    return openGitHubPullRequest({ workdir, githubRepo, branch, baseBranch, title, body }, run);
+  }
   const remoteName = "origin";
   // Fetch the head SHA from the remote.
-  const { stdout: lsOut } = await exec("git", ["ls-remote", remoteName, `refs/heads/${branch}`], { cwd: workdir });
+  const { stdout: lsOut } = await run("git", ["ls-remote", remoteName, `refs/heads/${branch}`], { cwd: workdir });
   const headSha = lsOut.split(/\s+/)[0];
   if (!headSha) {
     throw new Error(`branch ${branch} not found on remote ${remoteName}`);
   }
   // Determine the next PR number.
-  const { stdout: existingOut } = await exec("git", ["ls-remote", remoteName], { cwd: workdir });
+  const { stdout: existingOut } = await run("git", ["ls-remote", remoteName], { cwd: workdir });
   const numbers = Array.from(existingOut.matchAll(/refs\/pull\/(\d+)\/head/g)).map((m) => Number(m[1]));
   const prNumber = (numbers.length ? Math.max(...numbers) : 100) + 1;
   // Write refs/pull/<n>/head to the bare remote.
-  await exec(
+  await run(
     "git",
     ["push", remoteName, `+${headSha}:refs/pull/${prNumber}/head`],
     { cwd: workdir },
@@ -122,4 +156,113 @@ export async function openPullRequest(opts: {
   );
   const prUrl = `file://${remotePath.replace(/\.git$/, "")}/pull/${prNumber}`;
   return { prNumber, prUrl, headSha, baseBranch };
+}
+
+async function readOrigin(workdir: string, fallback: string, run: CommandRunner): Promise<string> {
+  try {
+    const { stdout } = await run("git", ["remote", "get-url", "origin"], { cwd: workdir });
+    return stdout.trim() || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function parseGitHubRepo(remote: string): string | null {
+  const match = remote.match(/github\.com[/:]([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i);
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
+async function openGitHubPullRequest(
+  opts: {
+    workdir: string;
+    githubRepo: string;
+    branch: string;
+    baseBranch: string;
+    title: string;
+    body: string;
+  },
+  run: CommandRunner,
+): Promise<PullRequestResult> {
+  const listArgs = [
+    "pr", "list",
+    "--repo", opts.githubRepo,
+    "--head", opts.branch,
+    "--base", opts.baseBranch,
+    "--state", "open",
+    "--json", "number,url,headRefOid,baseRefName",
+    "--limit", "1",
+  ];
+  const existing = JSON.parse((await run("gh", listArgs, { cwd: opts.workdir })).stdout || "[]") as Array<{
+    number: number;
+    url: string;
+    headRefOid: string;
+    baseRefName: string;
+  }>;
+  let prUrl = existing[0]?.url;
+  if (!prUrl) {
+    const created = await run("gh", [
+      "pr", "create",
+      "--repo", opts.githubRepo,
+      "--head", opts.branch,
+      "--base", opts.baseBranch,
+      "--title", opts.title,
+      "--body", opts.body,
+    ], { cwd: opts.workdir });
+    prUrl = created.stdout.trim();
+  }
+  const viewed = JSON.parse((await run("gh", [
+    "pr", "view", prUrl,
+    "--repo", opts.githubRepo,
+    "--json", "number,url,headRefOid,baseRefName",
+  ], { cwd: opts.workdir })).stdout) as {
+    number: number;
+    url: string;
+    headRefOid: string;
+    baseRefName: string;
+  };
+  return {
+    prNumber: viewed.number,
+    prUrl: viewed.url,
+    headSha: viewed.headRefOid,
+    baseBranch: viewed.baseRefName,
+  };
+}
+
+export async function mergePullRequest(opts: {
+  workdir: string;
+  remotePath: string;
+  prUrl: string;
+}, run: CommandRunner = runCommand): Promise<MergeResult> {
+  const origin = await readOrigin(opts.workdir, opts.remotePath, run);
+  const githubRepo = parseGitHubRepo(origin) ?? parseGitHubRepo(opts.remotePath);
+  if (!githubRepo) {
+    throw new Error("automatic merge currently requires a GitHub remote");
+  }
+  const readState = async () => JSON.parse((await run("gh", [
+    "pr", "view", opts.prUrl,
+    "--repo", githubRepo,
+    "--json", "state,mergedAt,mergeCommit",
+  ], { cwd: opts.workdir })).stdout) as {
+    state: string;
+    mergedAt: string | null;
+    mergeCommit: { oid: string } | null;
+  };
+  let state = await readState();
+  if (state.state !== "MERGED") {
+    await run("gh", [
+      "pr", "merge", opts.prUrl,
+      "--repo", githubRepo,
+      "--merge",
+      "--delete-branch",
+    ], { cwd: opts.workdir });
+    state = await readState();
+  }
+  if (state.state !== "MERGED" || !state.mergedAt || !state.mergeCommit?.oid) {
+    throw new Error(`GitHub did not confirm PR merge; state=${state.state}`);
+  }
+  return {
+    merged: true,
+    mergeCommitSha: state.mergeCommit.oid,
+    mergedAt: state.mergedAt,
+  };
 }

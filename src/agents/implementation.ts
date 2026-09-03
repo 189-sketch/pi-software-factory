@@ -9,6 +9,7 @@ import type {
 } from "../core/types.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { slugify } from "./spec.js";
 
 /** Extract string content from a tool observation. */
@@ -51,12 +52,26 @@ export class ImplementationAgent extends BaseAgent<ImplementationResult> {
         return { kind: "tool", description: "read TECH.md", toolName: "read_file", args: { path: this.techPath() } };
       case "edit":
         return { kind: "tool", description: "write the implementation", toolName: "write_file", args: { path: this.implPath(), content: this.renderImpl(state) } };
-      case "commit":
-        return { kind: "tool", description: "commit on feature branch and push", toolName: "commit_and_push", args: { branch, message: `Implement issue #${this.ctx.issue.number}: ${this.ctx.issue.title}`, files: [this.implPath(), this.testPath()] } };
       case "test":
-        return { kind: "tool", description: "run unit tests", toolName: "run_shell", args: { command: "node --test " + this.testPath() + " || true" } };
+        return { kind: "tool", description: "run unit tests", toolName: "run_shell", args: { command: "node --test " + this.testPath() } };
       case "spec_check":
-        return { kind: "tool", description: "validate against specs", toolName: "run_shell", args: { command: "node factory/scripts/spec-check.mjs " + this.slug() } };
+        return { kind: "tool", description: "validate against specs", toolName: "run_shell", args: { command: `node "${this.specCheckScript()}" ${this.slug()}` } };
+      case "commit":
+        return {
+          kind: "tool",
+          description: "commit on feature branch and push",
+          toolName: "commit_and_push",
+          args: {
+            branch,
+            message: `Implement issue #${this.ctx.issue.number}: ${this.ctx.issue.title}`,
+            files: [
+              this.implPath(),
+              this.testPath(),
+              ...(state.scratch.specProduct ? [this.productPath()] : []),
+              ...(state.scratch.specTech ? [this.techPath()] : []),
+            ],
+          },
+        };
       case "open_pr":
         return {
           kind: "tool",
@@ -97,16 +112,6 @@ export class ImplementationAgent extends BaseAgent<ImplementationResult> {
         next.scratch.filesChanged = [written, this.testPath()];
         // Also write the test file (real test code, not a stub).
         await this.writeTest();
-        next.scratch.step = "commit";
-        break;
-      }
-      case "commit": {
-        // Commit the change on a feature branch in the target repo.
-        const commitResult = observation as { branch?: string; commitSha?: string; ok?: boolean } | string;
-        if (typeof commitResult === "object" && commitResult && "commitSha" in commitResult) {
-          next.scratch.branch = commitResult.branch;
-          next.scratch.commitSha = commitResult.commitSha;
-        }
         next.scratch.step = "test";
         break;
       }
@@ -115,7 +120,10 @@ export class ImplementationAgent extends BaseAgent<ImplementationResult> {
         next.scratch.test = typeof r === "string"
           ? { exitCode: 0, stdout: r, stderr: "" }
           : r;
-        next.scratch.step = "spec_check";
+        if (typeof r === "object" && r && Number(r.exitCode ?? 1) !== 0) {
+          throw new Error(`implementation tests failed: ${String(r.stderr || r.stdout || "unknown error")}`);
+        }
+        next.scratch.step = state.scratch.specProduct && state.scratch.specTech ? "spec_check" : "commit";
         break;
       }
       case "spec_check": {
@@ -123,6 +131,17 @@ export class ImplementationAgent extends BaseAgent<ImplementationResult> {
         const passed = typeof r === "object" && r && typeof r.exitCode === "number" ? r.exitCode === 0 : true;
         next.scratch.specAlignmentPassed = passed;
         next.scratch.specCheck = observation;
+        if (!passed) throw new Error("implementation does not satisfy the generated specs");
+        next.scratch.step = "commit";
+        break;
+      }
+      case "commit": {
+        // Commit the validated change on a feature branch and push it.
+        const commitResult = observation as { branch?: string; commitSha?: string; ok?: boolean } | string;
+        if (typeof commitResult === "object" && commitResult && "commitSha" in commitResult) {
+          next.scratch.branch = commitResult.branch;
+          next.scratch.commitSha = commitResult.commitSha;
+        }
         next.scratch.step = "open_pr";
         break;
       }
@@ -178,10 +197,10 @@ export class ImplementationAgent extends BaseAgent<ImplementationResult> {
       : undefined;
     return {
       issueNumber: this.ctx.issue.number,
-      branch,
-      commitSha: "deadbeef".repeat(5).slice(0, 40),
+      branch: (state.scratch.branch as string) || branch,
+      commitSha: (state.scratch.commitSha as string) || "",
       prUrl: (state.scratch.prUrl as string) ?? "",
-      prNumber: 200 + this.ctx.issue.number,
+      prNumber: Number(state.scratch.prNumber ?? 0),
       filesChanged: (state.scratch.filesChanged as string[]) ?? [this.implPath()],
       validation,
       specAlignment,
@@ -204,6 +223,9 @@ export class ImplementationAgent extends BaseAgent<ImplementationResult> {
   }
   private slug(): string {
     return `issue-${this.ctx.issue.number}-${slugify(this.ctx.issue.title)}`;
+  }
+  private specCheckScript(): string {
+    return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "scripts", "spec-check.mjs").replace(/\\/g, "/");
   }
   private prCommand(): string {
     return `echo "opened implementation PR for issue #${this.ctx.issue.number}"`;
@@ -239,6 +261,10 @@ export class ImplementationAgent extends BaseAgent<ImplementationResult> {
       ``,
       `test("feature${this.ctx.issue.number} returns error for invalid input", () => {`,
       `  assert.deepEqual(feature${this.ctx.issue.number}({ ok: false }), { state: "error", message: "not ok" });`,
+      `});`,
+      ``,
+      `test("feature${this.ctx.issue.number} rejects malformed input", () => {`,
+      `  assert.deepEqual(feature${this.ctx.issue.number}(null), { state: "error", message: "invalid input" });`,
       `});`,
       ``,
     ].join("\n");

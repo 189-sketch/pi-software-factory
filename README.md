@@ -163,8 +163,8 @@ net start FactoryDaemon
 |---|---|---|
 | `GH_TOKEN` | — | `gh` CLI auth |
 | `ANTHROPIC_AUTH_TOKEN` | — | LLM API key |
-| `ANTHROPIC_BASE_URL` | `https://api.minimaxi.com/anthropic` | Anthropic-compatible base URL |
-| `ANTHROPIC_MODEL` | `MiniMax-M3` | Model id |
+| `ANTHROPIC_BASE_URL` | required | Anthropic-compatible base URL loaded from the environment |
+| `ANTHROPIC_MODEL` | required | Model id loaded from the environment |
 | `FACTORY_GH_REPO` | — | `owner/name` of the target repo |
 | `FACTORY_POLL_INTERVAL` | `30` | Seconds between polls |
 
