@@ -140,6 +140,28 @@ async function main() {
     console.log("(no src/ dir in factory source; skipping agent code copy)");
   }
 
+  // 2.5. Make sure the factory/ skeleton (just copied above) never gets
+  // committed into the target repo. The runner's own source lives in
+  // factory/ — including it in PRs makes review-pr flag the runner's
+  // console.log / TODO / eval( strings as findings against every issue.
+  //
+  // Idempotent: only appends the line if it isn't already there. Safe for
+  // any pre-existing target — handles LF/CRLF and missing-file cases.
+  try {
+    const gi = path.join(target, ".gitignore");
+    let giText = "";
+    if (existsSync(gi)) giText = readFileSync(gi, "utf-8");
+    const hasFactory = /(^|\r?\n)factory\/\s*(\r?\n|$)/.test(giText);
+    if (!hasFactory) {
+      const sep = giText === "" || /\r?\n$/.test(giText) ? "" : "\n";
+      giText = `${giText}${sep}# factory runner (installed by pi-software-factory)\nfactory/\n`;
+      writeFileSync(gi, giText, "utf-8");
+      console.log("✓ Appended factory/ to .gitignore");
+    }
+  } catch (err) {
+    console.warn(`⚠ Could not update .gitignore (${String(err).split("\n")[0]}); continuing install`);
+  }
+
   // 3. Cloud-specific: copy workflow templates to .github/workflows/
   if (mode === "cloud" || mode === "both") {
     const wfSrc = path.join(factoryRoot, "templates", "github", "workflows");

@@ -76,7 +76,15 @@ export async function commitAndPush(opts: {
   if (opts.files && opts.files.length > 0) {
     await exec("git", ["add", ...opts.files], { cwd: workdir });
   } else {
-    await exec("git", ["add", "-A"], { cwd: workdir });
+    // Atomic pathspec exclusion (git ≥ 2.13). factory/ is the runner's
+    // private copy — it never belongs in a PR. The negative pathspec
+    // is naturally idempotent whether or not factory/ exists.
+    await exec("git", ["add", "-A", "--", ":!factory/"], { cwd: workdir });
+    // Belt + suspenders: a defensive reset covers the rare race where
+    // a stale index had factory/ staged before our pipeline ran (e.g.
+    // a developer did `git add .` before the daemon picked up the
+    // issue). Resetting is a no-op if factory/ isn't in the index.
+    await exec("git", ["reset", "-q", "--", "factory/"], { cwd: workdir }).catch(() => {});
   }
   // Allow empty commits (e.g. when only a spec file changed and the impl agent
   // already committed earlier); otherwise commit changes.

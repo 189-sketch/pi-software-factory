@@ -122,10 +122,13 @@ export class FactoryOrchestrator extends EventEmitter {
         `Repo workdir: ${this.workdir}`,
         `Use the available tools (read_file, write_file, run_shell, commit_and_push, open_pull_request) to:`,
         `  1. Inspect the existing repo structure (run_shell: ls).`,
-        `  2. Implement the smallest cohesive change that satisfies every acceptance criterion in the issue body.`,
-        `  3. Write a real Node.js test file using node:test + node:assert that exercises the happy path AND every error path. Run it with node --test until it passes.`,
-        `  4. Commit and push on a feature branch named feature/issue-${issue.number}-${slugify(issue.title)}.`,
-        `  5. Open a pull request.`,
+        `  2. Choose descriptive kebab-case file paths derived from the issue title`,
+        `     (e.g. src/cosmic-core.js, tests/cosmic-core.test.js, or whatever convention the repo already uses).`,
+        `     NEVER use the legacy 'feature-<number>.*' pattern — that hardcodes the issue id into the file name and gets REJECTed by review-pr.`,
+        `  3. Implement the smallest cohesive change that satisfies every acceptance criterion in the issue body.`,
+        `  4. Write a real Node.js test file using node:test + node:assert that exercises the happy path AND every error path. Run it with node --test until it passes.`,
+        `  5. Commit and push on a feature branch named feature/issue-${issue.number}-${slugify(issue.title)}.`,
+        `  6. Open a pull request.`,
         ``,
         `When done, reply with ONLY a single JSON object (no prose, no markdown). Start your reply with '{' and finish with '}':`,
         `{"filesChanged":["..."],"testCommand":"node --test ...","prUrl":"https://github.com/..."}`,
@@ -186,10 +189,17 @@ export class FactoryOrchestrator extends EventEmitter {
     try {
       const { stdout: root } = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: this.workdir });
       if (path.resolve(root.trim()) !== path.resolve(this.workdir)) throw new Error("workdir is not a repository root");
+      // The factory/ directory holds the runner's own source copied into
+      // the target workdir. Excluding it from the review diff prevents the
+      // regex-based review rules (console.log/TODO/eval() from firing on
+      // the runner's own code. Recursive directory exclusion is implicit
+      // in git pathspec — naming the directory is enough.
       const { stdout } = await exec("git", [
         "diff",
         "--unified=3",
         `origin/${this.repoMeta.defaultBranch}...HEAD`,
+        "--",
+        ":!factory",
       ], { cwd: this.workdir, maxBuffer: 16 * 1024 * 1024 });
       rawDiff = stdout;
     } catch (err) {
@@ -375,13 +385,26 @@ function parseImplementationJson(text: string): ImplementationResult {
     if (m) { try { last = JSON.parse(m[0]); } catch {} }
   }
   if (!last) throw new Error("LLM did not return a valid implementation JSON:\n" + text.slice(0, 800));
+  const filesChanged: string[] = Array.isArray(last.filesChanged)
+    ? last.filesChanged.map(String)
+    : [];
+  // Soft-warn on legacy feature-N.* paths. Old fixtures/issues may have
+  // committed under that scheme; we don't reject them (don't break
+  // existing runs), but we surface the deviation so operators can spot
+  // when a prompt regression has reverted to the legacy pattern.
+  for (const f of filesChanged) {
+    if (/feature-\d+\.\w+$/.test(f)) {
+      // eslint-disable-next-line no-console
+      console.warn(`[factory] implementation LLM produced legacy path '${f}'; consider migrating to slug-based naming`);
+    }
+  }
   return {
     issueNumber: 0,
     branch: typeof last.branch === "string" ? last.branch : "",
     commitSha: typeof last.commitSha === "string" ? last.commitSha : "",
     prUrl: typeof last.prUrl === "string" ? last.prUrl : "",
     prNumber: 0,
-    filesChanged: Array.isArray(last.filesChanged) ? last.filesChanged.map(String) : [],
+    filesChanged,
     validation: [],
     comment: typeof last.comment === "string" ? last.comment : "",
   };

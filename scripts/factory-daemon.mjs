@@ -408,6 +408,25 @@ async function processIssue(issue, stage = "") {
       // Windows faces .cmd / long-path issues that have nothing to do
       // with the actual pipeline work. Pass --do-npm-install on the CLI
       // (or set FACTORY_DO_NPM_INSTALL=1) to re-enable.
+
+      // Defense-in-depth: even if the target's .gitignore is missing or
+      // factory/ was already tracked, drop it from the index so the
+      // implementation agent's `git add -A` won't pull the runner's
+      // own source into the PR. `--ignore-unmatch` keeps this safe on
+      // fresh targets where factory/ is untracked.
+      try {
+        execFileSync(
+          "git",
+          ["rm", "--cached", "-r", "--ignore-unmatch", "factory"],
+          { cwd: issueWorkdir, stdio: "ignore" },
+        );
+        log("INFO", "factory-cached-removed", { issue: issue.number, cwd: issueWorkdir });
+      } catch (rmErr) {
+        log("WARN", "factory-cached-remove-failed", {
+          issue: issue.number,
+          error: String(rmErr).split("\n")[0],
+        });
+      }
     } catch (err) {
       log("ERROR", "clone-failed", { issue: issue.number, error: String(err) });
       return { ok: false, error: "clone failed" };
@@ -487,8 +506,22 @@ async function processIssue(issue, stage = "") {
     const fetchedKey = `fetched-${issue.number}`;
     const processedKey = `processed-${issue.number}`;
     try { fsSync.unlinkSync(path.join(STATE_DIR, fetchedKey)); } catch {}
-    if (exitCode === 0) {
+    // Only mark "processed" when the pipeline either merged the PR or
+    // never reached review (e.g. triage="Wait to implement"). A REJECT
+    // verdict means the implementation needs another pass — leave the
+    // issue un-processed so the next poll cycle (or improve-review-pr)
+    // retries. Without this, a single REJECT permanently wedges the
+    // issue because ok===exitCode===0 would have written processed-N.
+    const verdict = summary?.review?.verdict;
+    const merged = Boolean(summary?.merged);
+    if (exitCode === 0 && verdict !== "REJECT") {
       fsSync.writeFileSync(path.join(STATE_DIR, processedKey), new Date().toISOString());
+    } else if (verdict === "REJECT") {
+      log("WARN", "issue-rejected-will-retry", {
+        issue: issue.number,
+        comments: summary?.review?.comments ?? null,
+        branch: summary?.implementation?.branch ?? null,
+      });
     }
   }
   return { ok: exitCode === 0, summary, stdout, stderr };
@@ -535,7 +568,21 @@ async function pollingLoop() {
         log("INFO", "process-issue-start", { issue: issue.number });
         try {
           const result = await processIssue(issue);
-          log("INFO", "process-issue-end", { issue: issue.number, ok: result?.ok });
+          // Surface the review verdict so REJECT is visible in daemon.log
+          // (not masked by exitCode===0). The CLI's stdout ends with a
+          // JSON summary; `summary.review.comments` is the count (number),
+          // not an array — see src/cli/run-issue.ts:90.
+          const review = result?.summary?.review ?? null;
+          const verdict = review?.verdict ?? null;
+          const comments = typeof review?.comments === "number" ? review.comments : null;
+          const merged = Boolean(result?.summary?.merged);
+          log("INFO", "process-issue-end", {
+            issue: issue.number,
+            ok: result?.ok,
+            verdict,
+            comments,
+            merged,
+          });
           if (args.once) return result?.ok ? 0 : 1;
           if (!result?.ok) await sleep(POLL_INTERVAL * 1000);
         } catch (inner) {

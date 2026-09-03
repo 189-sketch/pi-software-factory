@@ -17,6 +17,15 @@ description: Implement a fix or feature from a GitHub issue by making the smalle
 8. Open a branch and pull request; capture the PR URL.
 9. Post a final comment on the issue with the PR URL, validation summary, and verification result.
 
+## File naming
+
+- Use **descriptive kebab-case file names** derived from the issue title:
+  - `src/<slug-of-title>.js` (or `.ts`) for the implementation module
+  - `tests/<slug-of-title>.test.js` for the Node test file
+  - If the repo already has a convention (`__tests__/`, `spec/`, `test/`), follow that convention instead.
+- **Never** use the legacy `feature-<number>.*` pattern — that hardcodes the issue id into the file name, pollutes the repo with semantic-free names, and gets the diff REJECTed by review-pr's regex rules (the runner's own code under `factory/` historically tripped the same rule).
+- If the issue title produces an empty slug (only punctuation, only emojis, only CJK that wouldn't slugify), surface the bad title in the final issue comment so the author can rename it; otherwise the implementation agent will pick a reasonable fallback.
+
 ## Guardrails
 
 - Never implement without fetching issue context.
