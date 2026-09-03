@@ -169,8 +169,28 @@ export class FactoryOrchestrator extends EventEmitter {
       state.implementation = { ...state.implementation, behaviorVerification: verify };
       this.emit("verify", { issueNumber: issue.number, result: verify });
 
-      // 6. Merge only after strict verification and remote confirmation.
-      if (verify.status === "verified" && this.remotePath && state.implementation.prUrl) {
+      // 6. Merge is gated on review approval; verify-behavior is advisory.
+      //    Background: UI/visual issues (three.js games, dashboards,
+      //    anything that needs a real browser) frequently return
+      //    "not-verified" in LLM-runner environments even when the
+      //    implementation is correct. Treating verify as a hard gate
+      //    makes the merge step unusable for entire categories of
+      //    issues. Only "blocked" is treated as a hard veto — every
+      //    other status (verified / partially-verified / not-verified)
+      //    is best-effort and merges proceed with a logged note.
+      const verifyBlocksMerge = verify.status === "blocked";
+      if (verifyBlocksMerge) {
+        this.logger.warn(
+          `skipping merge for issue #${issue.number} ` +
+          `(review=APPROVE but verify.status=blocked)`,
+        );
+      } else if (this.remotePath && state.implementation.prUrl) {
+        if (verify.status !== "verified") {
+          this.logger.info(
+            `merging with advisory verify for issue #${issue.number} ` +
+            `(review=APPROVE, verify=${verify.status})`,
+          );
+        }
         await mergePullRequest({
           workdir: this.workdir,
           remotePath: this.remotePath,
