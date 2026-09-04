@@ -41,7 +41,7 @@ export async function runLlmAgent<TResult>(opts: LlmAgentOpts<TResult>): Promise
     }
     const tools = toAgentTools([...(opts.extraTools ?? defaultTools(opts.ctx))], opts.ctx);
     const adapter = getModelAdapter();
-    const model: Model<string> = adapter.buildModel();
+    const model: Model<string> = await adapter.buildModel();
     const agent = new Agent({
         getApiKey: async () => process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || undefined,
         streamFn: adapter.streamFn,

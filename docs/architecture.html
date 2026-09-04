@@ -228,6 +228,7 @@
     <div class="sub">
       多智能体软件工厂,基于 <code>pi-mono</code> 的 <code>@mariozechner/pi-agent-core</code>。
       由 GitHub Issue 驱动,通过六个独立 Agent (每个拥有自己的 <code>SKILL.md</code>) 穿越完整的软件研发流水线,产出可合并的 PR。
+      用户面 CLI 已统一为 <code>factory</code>(<code>bin/factory.js</code>),工厂以预打包的 <code>dist/</code> 形式随 npm 发布。
     </div>
   </div>
   <div class="meta">
@@ -238,7 +239,7 @@
 </div>
 
 <div class="canvas">
-<svg class="diagram" viewBox="0 0 1640 1180" role="img" aria-labelledby="diagTitle diagDesc">
+<svg class="diagram" viewBox="0 0 1640 1200" role="img" aria-labelledby="diagTitle diagDesc">
   <title id="diagTitle">Pi Software Factory 架构图</title>
   <desc id="diagDesc">
     分层拓扑:顶部为四种入口(CLI、Webhook、本地守护进程、可视化面板),中部为工厂核心(编排器、六个 Agent、Agent 循环、工具与技能加载器、LLM 适配器),右侧为外部集成(目标 GitHub 仓库、Anthropic 兼容 LLM)。底部展示 Issue 流水线(Triage → Spec → Implementation → Review-PR → Verify-Behavior → Merge)。
@@ -289,7 +290,7 @@
     </radialGradient>
   </defs>
 
-  <rect width="1640" height="1180" fill="url(#grid)"/>
+  <rect width="1640" height="1200" fill="url(#grid)"/>
 
   <!-- ===================== lane titles (left margin) ===================== -->
   <g transform="translate(28,0)">
@@ -304,76 +305,76 @@
     <rect x="80" y="92" width="1480" height="170" rx="6" fill="#0c1018" stroke="#1d2330" stroke-width="1"/>
 
     <!-- entry cards -->
-    <!-- CLI -->
+    <!-- 1: factory CLI (unified entry) -->
     <g transform="translate(108,116)">
-      <rect class="card" width="240" height="122" rx="4"/>
+      <rect class="card card--accent" width="240" height="122" rx="4" stroke="#5fb1ff"/>
       <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbCool)"/>
-      <text class="label-title" x="40" y="26">CLI · run-issue</text>
-      <text class="label-sub" x="40" y="44">单条/批量 Issue,或启动 webhook 端口</text>
+      <text class="label-title" x="40" y="26">factory CLI</text>
+      <text class="label-sub" x="40" y="44">bin/factory.js · npm 全局命令</text>
       <line x1="14" y1="60" x2="226" y2="60" stroke="#222836" stroke-width="1"/>
-      <text class="label-mono" x="14" y="78">tsx src/cli/run-issue.ts</text>
-      <text class="label-mono" x="14" y="94">  --issue fixtures/issues/*.json</text>
-      <text class="label-mono" x="14" y="110">  --webhook 8080</text>
+      <text class="label-mono" x="14" y="78">factory install &lt;target&gt;</text>
+      <text class="label-mono" x="14" y="94">factory start  [--panel]</text>
+      <text class="label-mono" x="14" y="110">factory panel  ·  uninstall</text>
     </g>
 
-    <!-- Webhook -->
+    <!-- 2: GitHub Webhook -->
     <g transform="translate(372,116)">
       <rect class="card" width="240" height="122" rx="4"/>
       <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbViolet)"/>
       <text class="label-title" x="40" y="26">GitHub Webhook</text>
-      <text class="label-sub" x="40" y="44">issues.opened / labeled / PR events</text>
+      <text class="label-sub" x="40" y="44">issues / labeled / pull_request</text>
       <line x1="14" y1="60" x2="226" y2="60" stroke="#222836" stroke-width="1"/>
       <text class="label-mono" x="14" y="78">issues.opened     → runForIssue</text>
-      <text class="label-mono" x="14" y="94">issues.labeled    → spec / impl stage</text>
+      <text class="label-mono" x="14" y="94">issues.labeled    → spec / impl</text>
       <text class="label-mono" x="14" y="110">pull_request.open → review-pr</text>
     </g>
 
-    <!-- Local daemon -->
+    <!-- 3: Local daemon -->
     <g transform="translate(636,116)">
       <rect class="card" width="240" height="122" rx="4"/>
       <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbAmber)"/>
       <text class="label-title" x="40" y="26">Local Daemon</text>
-      <text class="label-sub" x="40" y="44">长驻轮询本地目录或远端仓库,密钥不出本机</text>
+      <text class="label-sub" x="40" y="44">长驻轮询;密钥不出本机</text>
       <line x1="14" y1="60" x2="226" y2="60" stroke="#222836" stroke-width="1"/>
       <text class="label-mono" x="14" y="78">scripts/factory-daemon.mjs</text>
-      <text class="label-mono" x="14" y="94">--local-dir ./issues   --interval 5</text>
-      <text class="label-mono" x="14" y="110">--webhook-port 8080    --daily</text>
+      <text class="label-mono" x="14" y="94">--local-dir · --interval 5</text>
+      <text class="label-mono" x="14" y="110">--webhook-port · --daily</text>
     </g>
 
-    <!-- Control panel -->
+    <!-- 4: Control panel -->
     <g transform="translate(900,116)">
       <rect class="card card--accent" width="260" height="122" rx="4" stroke="#5fb1ff"/>
       <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbCool)"/>
       <text class="label-title" x="40" y="26">Control Panel</text>
       <text class="label-sub" x="40" y="44">Vite + React + TS · Conveyor 可视化</text>
       <line x1="14" y1="60" x2="246" y2="60" stroke="#222836" stroke-width="1"/>
-      <text class="label-mono" x="14" y="78">GET /api/projects      /issues</text>
-      <text class="label-mono" x="14" y="94">GET /api/events        /agents</text>
-      <text class="label-mono" x="14" y="110">GET /api/settings(读磁盘,无 mock)</text>
+      <text class="label-mono" x="14" y="78">dev : vite @ :5174</text>
+      <text class="label-mono" x="14" y="94">prod: bin/factory-panel.js</text>
+      <text class="label-mono" x="14" y="110">/api/{projects,events,agents,…}</text>
     </g>
 
-    <!-- Install / bootstrap (cross-cutting) -->
+    <!-- 5: Installer / Build pipeline -->
     <g transform="translate(1184,116)">
       <rect class="card" width="220" height="122" rx="4"/>
       <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbSignal)"/>
-      <text class="label-title" x="40" y="26">Installer / Build</text>
-      <text class="label-sub" x="40" y="44">--mode cloud · local · both</text>
+      <text class="label-title" x="40" y="26">Build · Install</text>
+      <text class="label-sub" x="40" y="44">把工厂打包 + 落到目标仓库</text>
       <line x1="14" y1="60" x2="206" y2="60" stroke="#222836" stroke-width="1"/>
-      <text class="label-mono" x="14" y="78">install-factory.mjs</text>
-      <text class="label-mono" x="14" y="94">build-factory.mjs · esbuild</text>
-      <text class="label-mono" x="14" y="110">build-panel.mjs  · tsc + vite</text>
+      <text class="label-mono" x="14" y="78">build-factory.mjs  → esbuild</text>
+      <text class="label-mono" x="14" y="94">build-panel.mjs    → vite</text>
+      <text class="label-mono" x="14" y="110">install-factory.mjs (mode both)</text>
     </g>
 
-    <!-- Cloud CI badge (separate group above right) -->
+    <!-- 6: Cloud CI (5 workflow YAMLs) -->
     <g transform="translate(1432,116)">
       <rect class="card" width="120" height="122" rx="4"/>
       <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbViolet)"/>
       <text class="label-title" x="40" y="26" style="font-size:11.5px">Cloud CI</text>
       <text class="label-sub" x="40" y="44">GitHub Actions</text>
       <line x1="14" y1="60" x2="106" y2="60" stroke="#222836" stroke-width="1"/>
-      <text class="label-mono" x="14" y="78">.github/</text>
+      <text class="label-mono" x="14" y="78">templates/</text>
       <text class="label-mono" x="14" y="94">  workflows/</text>
-      <text class="label-mono" x="14" y="110">    *.yml</text>
+      <text class="label-mono" x="14" y="110">    *.yml ×5</text>
     </g>
 
     <!-- arrows from entries → factory core (single fan-in) -->
@@ -433,6 +434,9 @@
         <text class="label-mono" x="10" y="122" text-anchor="start">  product-spec.md</text>
         <text class="label-mono" x="10" y="136" text-anchor="start">write_file · write-</text>
         <text class="label-mono" x="10" y="150" text-anchor="start">  tech-spec.md</text>
+        <!-- split badge -->
+        <rect x="118" y="6" width="36" height="14" rx="3" fill="#f3b34a" fill-opacity="0.18" stroke="#f3b34a" stroke-width="1"/>
+        <text x="136" y="16" text-anchor="middle" font-size="9" font-family="JetBrains Mono, monospace" fill="#f3b34a">SPLIT</text>
       </g>
 
       <!-- station 3: implementation -->
@@ -496,6 +500,11 @@
       <!-- loop-back arrow from improve → review (signals skill self-improvement) -->
       <path class="line--art" d="M1000,30 C1000,-6 700,-12 628,30" marker-end="url(#arr-violet)"/>
       <text class="label-mono" x="720" y="-18" fill="#b88dff">改进后的 SKILL.md 反馈给 Review-PR ↑</text>
+
+      <!-- split arrow: spec station → external GitHub target repo
+           (gh issue create --label ready-to-implement for each sub-issue) -->
+      <path class="line--ctrl" d="M276,30 C276,-30 380,-44 470,-44 C620,-44 1100,-44 1264,360" marker-end="url(#arr-amber)"/>
+      <text class="label-mono" x="500" y="-30" fill="#f3b34a">⚡ splitInto → gh issue create × N → 子 Issue 回流到 Triage</text>
     </g>
 
     <!-- ---------- core framework (bottom row) ---------- -->
@@ -523,16 +532,16 @@
       <g transform="translate(340,0)">
         <rect class="card" width="220" height="220" rx="4"/>
         <text class="label-title" x="18" y="26">SkillLoader</text>
-        <text class="label-sub" x="18" y="44">每个 Agent 一份 SKILL.md</text>
+        <text class="label-sub" x="18" y="44">运行时读 dist/ 下预解析的 JSON</text>
         <line x1="14" y1="60" x2="206" y2="60" stroke="#222836" stroke-width="1"/>
-        <text class="label-mono" x="18" y="82">skills/</text>
-        <text class="label-mono" x="32" y="98">triage/</text>
-        <text class="label-mono" x="32" y="114">spec/</text>
-        <text class="label-mono" x="32" y="130">implementation/</text>
-        <text class="label-mono" x="32" y="146">review-pr/</text>
-        <text class="label-mono" x="32" y="162">verify-behavior/</text>
-        <text class="label-mono" x="32" y="178">improve-review-pr/</text>
-        <text class="label-sub" x="18" y="200">YAML frontmatter + body</text>
+        <text class="label-mono" x="18" y="82">dist/factory/skills/</text>
+        <text class="label-mono" x="32" y="98">triage.json</text>
+        <text class="label-mono" x="32" y="114">spec.json</text>
+        <text class="label-mono" x="32" y="130">implementation.json</text>
+        <text class="label-mono" x="32" y="146">review-pr.json</text>
+        <text class="label-mono" x="32" y="162">verify-behavior.json</text>
+        <text class="label-mono" x="32" y="178">improve-review-pr.json</text>
+        <text class="label-sub" x="18" y="200">构建期由 build-factory.mjs 预解析</text>
       </g>
 
       <!-- tools registry -->
@@ -579,7 +588,7 @@
 
     <!-- GitHub target repo -->
     <g transform="translate(1264,348)">
-      <rect class="card" width="272" height="232" rx="4"/>
+      <rect class="card" width="272" height="252" rx="4"/>
       <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbSignal)"/>
       <text class="label-title" x="40" y="26">Target GitHub Repo</text>
       <text class="label-sub" x="40" y="44">被工厂改写的真实仓库</text>
@@ -587,11 +596,12 @@
       <text class="label-mono" x="18" y="84">工作目录 (workdir)</text>
       <text class="label-mono" x="18" y="100" fill="#c8cfdc">  git clone → main</text>
       <text class="label-mono" x="18" y="124">分支</text>
-      <text class="label-mono" x="18" y="140" fill="#c8cfdc">  feature/issue-N-...</text>
+      <text class="label-mono" x="18" y="140" fill="#c8cfdc">  feature/issue-N-slug</text>
       <text class="label-mono" x="18" y="164">Primitives</text>
       <text class="label-mono" x="18" y="180" fill="#c8cfdc">  git · gh CLI</text>
-      <text class="label-mono" x="18" y="204">产物</text>
-      <text class="label-mono" x="18" y="220" fill="#c8cfdc">  commits · PRs · labels</text>
+      <text class="label-mono" x="18" y="200">产物</text>
+      <text class="label-mono" x="18" y="216" fill="#c8cfdc">  commits · PRs · labels</text>
+      <text class="label-mono" x="18" y="240" fill="#f3b34a">⚠ factory/ 由 :!factory 排除</text>
     </g>
 
     <!-- LLM provider -->
@@ -609,15 +619,16 @@
 
     <!-- Disk state (.factory/) -->
     <g transform="translate(1264,760)">
-      <rect class="card" width="272" height="148" rx="4"/>
+      <rect class="card" width="272" height="162" rx="4"/>
       <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbAmber)"/>
       <text class="label-title" x="40" y="26">Local State (.factory/)</text>
       <text class="label-sub" x="40" y="44">控制面板的“单一事实来源”</text>
       <line x1="14" y1="60" x2="258" y2="60" stroke="#222836" stroke-width="1"/>
-      <text class="label-mono" x="18" y="82">state/N.json   每条 Issue 的流水线结果</text>
-      <text class="label-mono" x="18" y="98">daemon.log     ISO LEVEL stage msg {...}</text>
-      <text class="label-mono" x="18" y="114">pr_diff.txt    审查用 diff</text>
-      <text class="label-mono" x="18" y="130">pr_description.txt</text>
+      <text class="label-mono" x="18" y="82">state/N.json         每条 Issue 流水线结果</text>
+      <text class="label-mono" x="18" y="98">daemon.log           ISO LEVEL stage msg {...}</text>
+      <text class="label-mono" x="18" y="114">state-improve-review-pr.json</text>
+      <text class="label-mono" x="18" y="130">last-improve-review-pr  ·  issue-N.json</text>
+      <text class="label-mono" x="18" y="146">pr_diff.txt · pr_description.txt</text>
     </g>
 
     <!-- arrows: orchestrator → target repo (commit/pr/labels) -->
@@ -634,10 +645,21 @@
   </g>
 
   <!-- ===================== SECTION 4: PIPELINE TIMELINE ===================== -->
+  <!-- viewBox height expanded below from 1180 → 1200 to fit the new fork and legend text -->
   <g id="pipeline">
     <rect x="80" y="960" width="1480" height="180" rx="6" fill="#0c1018" stroke="#1d2330" stroke-width="1"/>
 
-    <text class="lane-title" x="100" y="952">PIPELINE TIMELINE · single issue</text>
+    <text class="lane-title" x="100" y="952">PIPELINE TIMELINE · parent may split into N sub-issues at the spec station</text>
+
+    <!-- split-fork illustration: amber fork rising from the spec node, fanning out to three sub-issues -->
+    <path class="line--ctrl" d="M620,1054 C620,1078 620,1095 660,1100" stroke-width="1" fill="none"/>
+    <circle cx="660" cy="1100" r="3.5" fill="#f3b34a"/>
+    <path class="line--ctrl" d="M660,1100 L780,1086" stroke-width="1" fill="none" marker-end="url(#arr-amber)"/>
+    <path class="line--ctrl" d="M660,1100 L780,1100" stroke-width="1" fill="none" marker-end="url(#arr-amber)"/>
+    <path class="line--ctrl" d="M660,1100 L780,1114" stroke-width="1" fill="none" marker-end="url(#arr-amber)"/>
+    <text class="label-mono" x="788" y="1089" fill="#f3b34a">sub #A (ready-to-implement)</text>
+    <text class="label-mono" x="788" y="1103" fill="#f3b34a">sub #B (ready-to-implement)</text>
+    <text class="label-mono" x="788" y="1117" fill="#f3b34a">sub #C (ready-to-implement)</text>
 
     <!-- timeline rail -->
     <line x1="180" y1="1054" x2="1450" y2="1054" stroke="#3a4356" stroke-width="1.25"/>
@@ -693,9 +715,10 @@
     </g>
 
     <!-- legend below timeline -->
-    <g transform="translate(180,1090)" font-size="10.5" font-family="JetBrains Mono, monospace" fill="#9aa3b5">
+    <g transform="translate(180,1138)" font-size="10.5" font-family="JetBrains Mono, monospace" fill="#9aa3b5">
       <text x="0" y="0">状态机:issue 标签驱动。Ready to implement 可跳过 Spec;Verify 仅作 advisory(只阻止 blocked)。</text>
       <text x="0" y="16">Improve-Review-PR 是日常外环,改进后的 SKILL.md 反馈给 Review-PR(见上方紫色虚线)。</text>
+      <text x="0" y="32" fill="#f3b34a">⚡ SpecAgent.finalize() 可返回 splitInto:N 条子 issue 由 gh issue create 落地,各自带 ready-to-implement 标签进入下一轮 pipeline。</text>
     </g>
   </g>
 
@@ -737,7 +760,9 @@
   <b>主要简化与假设</b>　· 　将六 Agent 平铺为 conveyor,而实现里 Review-PR 与 Verify-Behavior 串接在 Implementation 之后、Improve-Review-PR 是独立的日级外环(紫色虚线表示这一回流路径)。
   　· 　BaseAgent loop 单独抽出一张 mini 图,实际每个 Agent 是 BaseAgent 的子类,plan/act/finalize 由子类实现。
   　· 　外部三块(GitHub Repo / LLM Provider / 本地 <code>.factory/</code> state)在原代码里以函数 / 文件 API 形式分散;此图把它们归集到右侧"EXTERNAL"列,以表达它们的来源不同(GitHub 网络、LLM HTTP、磁盘)。
-  　· 　为节省空间,云模式与控制面板的"读盘"路径合并为一条蓝色箭头回指入口层。
+  　· 　用户面 CLI 已统一为 <code>bin/factory.js</code>(子命令 <code>install · start · panel · uninstall</code>),它内部 spawn <code>factory-daemon.mjs</code> 与 <code>bin/factory-panel.js</code> 作为子进程,故入口层把这三者画成一张统一的"factory CLI"卡片。
+  　· 　构建产物(<code>dist/factory/orchestrator.js</code> + <code>dist/factory/skills/*.json</code> + <code>dist/panel/</code>)通过 <code>build-factory.mjs</code>(esbuild)与 <code>build-panel.mjs</code>(vite)产出,在 npm tarball 里随包发布;SkillLoader 运行时只读 <code>dist/factory/skills/*.json</code>。
+  　· 　<code>factory/</code> 子目录是安装器把 runner 自身源码复制进目标 workdir 的结果,通过 <code>git diff ... -- :!factory</code> 路径过滤从审查 diff 中排除,避免误触发审查规则。
 </div>
 
 </body>

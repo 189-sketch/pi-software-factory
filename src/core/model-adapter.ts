@@ -44,8 +44,12 @@ export interface ModelAdapter {
      * Build a Model object compatible with pi-agent-core. The agent
      * loop never reads Model fields directly; this is purely for
      * passing into `streamFn`.
+     *
+     * Async because the Anthropic adapter lazy-loads `@mariozechner/pi-ai`
+     * via dynamic `import()` (pi-ai is pure ESM, so a CJS `require` cannot
+     * resolve it). Non-Anthropic adapters can return `Promise.resolve(...)`.
      */
-    buildModel(modelId?: string): Model<string>;
+    buildModel(modelId?: string): Promise<Model<string>>;
 
     /** Stream function matching pi-agent-core's `streamFn` signature. */
     streamFn: StreamFn;
@@ -97,45 +101,50 @@ class AnthropicAdapter implements ModelAdapter {
         return Boolean(getApiKey() && getBaseUrl() && getModelId());
     }
 
-    buildModel(modelId?: string): Model<string> {
-        // Lazy-import pi-ai so a project that supplies a non-Anthropic
-        // adapter doesn't need to install it.
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { getModels } =
-            require("@mariozechner/pi-ai") as typeof import("@mariozechner/pi-ai");
+    buildModel(modelId?: string): Promise<Model<string>> {
+        // Validate env first so the test suite can assert on the synchronous
+        // "ANTHROPIC_BASE_URL required" error without waiting for pi-ai to load.
         const resolvedModelId = modelId || getModelId();
         const baseUrl = getBaseUrl();
         if (!baseUrl || !resolvedModelId) {
-            throw new Error(
-                "Anthropic adapter requires ANTHROPIC_BASE_URL and ANTHROPIC_MODEL (or ANTHROPIC_DEFAULT_HAIKU_MODEL)",
+            return Promise.reject(
+                new Error(
+                    "Anthropic adapter requires ANTHROPIC_BASE_URL and ANTHROPIC_MODEL (or ANTHROPIC_DEFAULT_HAIKU_MODEL)",
+                ),
             );
         }
-        const base = getModels("anthropic").find((c) => c.api === "anthropic-messages");
-        if (!base) throw new Error("pi-ai has no Anthropic capability schema registered");
-        const requestOptions = getLlmRequestOptions();
-        return {
-            ...base,
-            id: resolvedModelId,
-            name: resolvedModelId,
-            baseUrl,
-            maxTokens: requestOptions.maxTokens ?? base.maxTokens,
-            headers: {
-                "x-api-key": getApiKey() ?? "",
-                "anthropic-version": "2023-06-01",
-            },
-        } as unknown as Model<string>;
+        // Lazy-import pi-ai so a project that supplies a non-Anthropic
+        // adapter doesn't need to install it. pi-ai is pure ESM, so we use
+        // dynamic import rather than require/createRequire.
+        return import("@mariozechner/pi-ai").then(({ getModels }) => {
+            const base = getModels("anthropic").find((c) => c.api === "anthropic-messages");
+            if (!base) throw new Error("pi-ai has no Anthropic capability schema registered");
+            const requestOptions = getLlmRequestOptions();
+            return {
+                ...base,
+                id: resolvedModelId,
+                name: resolvedModelId,
+                baseUrl,
+                maxTokens: requestOptions.maxTokens ?? base.maxTokens,
+                headers: {
+                    "x-api-key": getApiKey() ?? "",
+                    "anthropic-version": "2023-06-01",
+                },
+            } as unknown as Model<string>;
+        });
     }
 
     streamFn = ((model: any, context: any, options: Record<string, unknown> = {}) => {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { streamSimple } =
-            require("@mariozechner/pi-ai") as typeof import("@mariozechner/pi-ai");
-        const configured = getLlmRequestOptions();
-        return streamSimple(model, context, {
-            ...options,
-            ...(configured.timeoutMs === undefined ? {} : { timeoutMs: configured.timeoutMs }),
-            ...(configured.maxRetries === undefined ? {} : { maxRetries: configured.maxRetries }),
-            ...(configured.maxTokens === undefined ? {} : { maxTokens: configured.maxTokens }),
+        // streamSimple is itself async (returns an AsyncIterable), so it's
+        // safe to await the dynamic load inside it.
+        return import("@mariozechner/pi-ai").then(({ streamSimple }) => {
+            const configured = getLlmRequestOptions();
+            return streamSimple(model, context, {
+                ...options,
+                ...(configured.timeoutMs === undefined ? {} : { timeoutMs: configured.timeoutMs }),
+                ...(configured.maxRetries === undefined ? {} : { maxRetries: configured.maxRetries }),
+                ...(configured.maxTokens === undefined ? {} : { maxTokens: configured.maxTokens }),
+            });
         });
     }) as unknown as StreamFn;
 }
@@ -156,15 +165,15 @@ class EchoAdapter implements ModelAdapter {
         return true;
     }
 
-    buildModel(): Model<string> {
-        return {
+    buildModel(): Promise<Model<string>> {
+        return Promise.resolve({
             api: "anthropic-messages",
             provider: "echo",
             id: "echo-model",
             name: "echo-model",
             baseUrl: "echo://local",
             maxTokens: 1024,
-        } as Model<string>;
+        } as Model<string>);
     }
 
     streamFn = (async function* (model: unknown, context: any) {

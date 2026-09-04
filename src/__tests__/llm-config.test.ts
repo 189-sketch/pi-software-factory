@@ -9,7 +9,7 @@ import {
     listAdapterKeys,
 } from "../core/model-adapter.js";
 
-test("LLM adapter has no hard-coded base URL or model fallback", () => {
+test("LLM adapter has no hard-coded base URL or model fallback", async () => {
     const previous = { ...process.env };
     try {
         delete process.env.ANTHROPIC_AUTH_TOKEN;
@@ -24,15 +24,15 @@ test("LLM adapter has no hard-coded base URL or model fallback", () => {
         assert.equal(isLlmConfigured(), false);
         // No default adapter is registered for the empty case — but
         // resolveAdapter() always returns the registered "default" which
-        // is the Anthropic adapter, and it throws on buildModel when
+        // is the Anthropic adapter, and it rejects buildModel when
         // config is missing.
-        assert.throws(() => getModelAdapter().buildModel(), /ANTHROPIC_BASE_URL/);
+        await assert.rejects(() => getModelAdapter().buildModel(), /ANTHROPIC_BASE_URL/);
     } finally {
         process.env = previous;
     }
 });
 
-test("LLM adapter applies model, base URL, token budget, timeout, and retries from environment", () => {
+test("LLM adapter applies model, base URL, token budget, timeout, and retries from environment", async () => {
     const previous = { ...process.env };
     try {
         process.env.ANTHROPIC_AUTH_TOKEN = "test-token";
@@ -44,7 +44,7 @@ test("LLM adapter applies model, base URL, token budget, timeout, and retries fr
 
         const adapter = getModelAdapter();
         assert.equal(adapter.name, "anthropic");
-        const model = adapter.buildModel();
+        const model = await adapter.buildModel();
         const options = getLlmRequestOptions();
 
         assert.equal(model.id, "test-model");
