@@ -1,41 +1,68 @@
 {
-  "name": "factory",
-  "version": "1.0.0",
-  "description": "Multi-agent software factory built on the pi-mono framework.",
+  "name": "pi-software-factory-cli",
+  "version": "0.1.0",
+  "description": "Multi-agent software factory — installer, local daemon, and control panel as a single CLI.",
   "type": "module",
   "bin": {
-    "factory": "dist/cli/run-issue.js"
+    "factory": "./bin/factory.js",
+    "factory-panel": "./bin/factory-panel.js"
   },
+  "main": "dist/factory/orchestrator.js",
+  "exports": {
+    ".": "./bin/factory.js",
+    "./orchestrator": "./dist/factory/orchestrator.js",
+    "./panel": "./bin/factory-panel.js"
+  },
+  "files": [
+    "bin",
+    "dist/factory",
+    "dist/panel",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "start": "tsx src/cli/run-issue.ts",
-    "triage": "tsx src/cli/run-issue.ts --all",
-    "issue": "tsx src/cli/run-issue.ts --issue",
-    "webhook": "tsx src/cli/run-issue.ts --webhook 8080",
+    "build": "npm run build:factory && npm run build:panel",
+    "build:factory": "node scripts/build-factory.mjs",
+    "build:panel": "node scripts/build-panel.mjs",
+    "start": "node bin/factory.js start",
+    "panel": "node bin/factory-panel.js",
+    "install:dev": "node scripts/install-factory.mjs",
+    "prepublishOnly": "npm run build",
     "test": "node --import tsx --test --test-concurrency=1 src/__tests__/*.test.mjs src/__tests__/*.test.ts",
-    "validate-review": "node scripts/validate-review.mjs",
-    "annotate-diff": "node scripts/annotate-diff.mjs",
-    "spec-check": "node scripts/spec-check.mjs",
-    "collect-feedback": "node scripts/collect-feedback.mjs",
-    "typecheck": "tsc --noEmit"
+    "test:stub": "FACTORY_AGENT_MODE=stub node --import tsx --test --test-concurrency=1 src/__tests__/*.test.mjs src/__tests__/*.test.ts",
+    "test:state": "FACTORY_AGENT_MODE=stub npx tsx --test test/workflow-state.test.mjs",
+    "test:fast": "node --import tsx --test test/workflow-state.test.mjs test/signal-forward.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@mariozechner/pi-agent-core": "^0.73.1"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "^0.73.1"
+  },
+  "peerDependenciesMeta": {
+    "@mariozechner/pi-ai": {
+      "optional": true
+    }
+  },
+  "optionalDependencies": {
+    "playwright": "^1.62.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "esbuild": "^0.21.5",
+    "tsx": "^4.23.13",
+    "typescript": "^5.6.3"
   },
   "keywords": [
     "multi-agent",
     "factory",
-    "pi-mono",
-    "github-issues",
-    "sdlc"
+    "cli",
+    "automation"
   ],
   "author": "factory-demo",
-  "license": "MIT",
-  "devDependencies": {
-    "@types/node": "^26.4.0",
-    "tsx": "^4.23.13",
-    "typescript": "^7.0.2"
-  },
-  "dependencies": {
-    "@mariozechner/pi-agent-core": "^0.73.1",
-    "@mariozechner/pi-ai": "^0.73.1",
-    "playwright": "^1.62.1"
-  }
+  "license": "MIT"
 }
