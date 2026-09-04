@@ -68,7 +68,10 @@ export class SpecAgent extends BaseAgent<SpecPair> {
       tech,
       specBranch: `spec/issue-${this.ctx.issue.number}-${slug}`,
       specPrUrl: (state.scratch.specPrUrl as string) ?? "",
-    };
+      splitInto: Array.isArray(state.scratch.splitInto)
+        ? (state.scratch.splitInto as Array<{ title: string; body: string }>)
+        : undefined,
+    } as SpecPair & { splitInto?: Array<{ title: string; body: string }> };
   }
 
   private slug(): string {

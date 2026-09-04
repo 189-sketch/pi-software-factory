@@ -1,0 +1,103 @@
+/* ---------------------------------------------------------------------------
+ * tokens.css · design language for the factory control panel
+ *
+ * A vocabulary for one idea: a control room. Every value here is named for
+ * what it is, not what it looks like. Engineers reading this should be able
+ * to predict what `bg-rail` or `signal-pass` will look like in a layout.
+ *
+ * Palette: deep blue-black ink, paper panel above it, steel-grey text, and
+ * three "panel-light" colors that double as the pipeline's status lights:
+ *   - amber    : the bulb that says "running / inspected / needs attention"
+ *   - signal   : the bulb that says "passed / merged / verified"
+ *   - alert    : the bulb that says "rejected / blocked / failed"
+ *
+ * The intent is not "pretty dashboard" but "thing you would trust to read
+ * from across the room."
+ * ------------------------------------------------------------------------- */
+
+:root {
+    /* surface */
+    --ink: #0e1116;          /* app background — slightly warm blue-black   */
+    --ink-deep: #080a0d;     /* below the surface, for headers / dock bars   */
+    --paper: #161a21;        /* primary panel — cards, sidebars              */
+    --paper-2: #1d2229;      /* secondary panel — raised above paper         */
+    --rail: #22272f;         /* dividers, table borders, inset edges         */
+    --rail-2: #2c323b;       /* hover rail, slightly brighter                */
+
+    /* text */
+    --text: #d7dde6;         /* primary body                                 */
+    --text-mute: #8d96a4;    /* secondary text, captions                     */
+    --text-low: #5d6573;     /* disabled / placeholder                       */
+    --text-hi: #f4f6fa;      /* highest contrast — hero numbers, headlines   */
+
+    /* signal lights */
+    --amber: #e8a33d;        /* running / in-progress / inspecting           */
+    --amber-soft: #c98926;
+    --signal: #3fb68b;       /* passed / merged / verified                   */
+    --signal-soft: #2a8e6c;
+    --alert: #e0573b;        /* rejected / blocked / failed                  */
+    --alert-soft: #a83b25;
+    --cool: #5a8dee;         /* neutral — informational, queued              */
+    --cool-soft: #3d6abf;
+
+    /* shadows — soft, ambient. No drop shadow on hover; the room is flat. */
+    --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.03),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+
+    /* typography */
+    --font-display: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
+        Consolas, monospace;
+    --font-ui: "Inter", ui-sans-serif, system-ui, -apple-system,
+        "Segoe UI", Roboto, sans-serif;
+
+    /* type scale — 1.250 ratio, monospace-friendly */
+    --text-2xs: 10px;
+    --text-xs: 11px;
+    --text-sm: 12px;
+    --text-base: 13px;
+    --text-md: 14px;
+    --text-lg: 16px;
+    --text-xl: 20px;
+    --text-2xl: 26px;
+    --text-3xl: 34px;
+    --text-4xl: 44px;
+    --text-5xl: 60px;
+
+    /* spacing — 4px base */
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-5: 20px;
+    --sp-6: 24px;
+    --sp-7: 32px;
+    --sp-8: 40px;
+    --sp-9: 56px;
+
+    /* layout */
+    --sidebar-w: 240px;
+    --rail-w: 1px;
+    --header-h: 56px;
+
+    /* radii — square is the default. A few accents get a 2px nudge. */
+    --r-0: 0;
+    --r-1: 2px;
+    --r-2: 4px;
+    --r-3: 6px;
+    --r-pill: 999px;
+
+    /* motion */
+    --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --dur-fast: 120ms;
+    --dur-base: 200ms;
+    --dur-slow: 380ms;
+}
+
+/* Status -> signal color mapping, used by chips, conveyor lights, etc. */
+:root {
+    --status-running: var(--amber);
+    --status-pass: var(--signal);
+    --status-fail: var(--alert);
+    --status-idle: var(--text-low);
+    --status-info: var(--cool);
+}

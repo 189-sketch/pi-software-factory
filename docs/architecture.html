@@ -1,0 +1,769 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Pi Software Factory · 架构图</title>
+<style>
+  /* ---------- design tokens (mirror control-panel) ---------- */
+  :root {
+    --ink:        #0f1115;
+    --ink-soft:   #161a22;
+    --ink-line:   #222836;
+    --ink-mute:   #2b3242;
+    --paper:      #e8edf5;
+    --paper-dim:  #9aa3b5;
+    --paper-soft: #c8cfdc;
+
+    --amber:      #f3b34a;
+    --amber-glow: rgba(243, 179, 74, 0.35);
+    --signal:     #4ad17a;
+    --signal-glow:rgba(74, 209, 122, 0.32);
+    --alert:      #e35d6a;
+    --alert-glow: rgba(227, 93, 106, 0.32);
+    --cool:       #5fb1ff;
+    --cool-glow:  rgba(95, 177, 255, 0.30);
+    --violet:     #b88dff;
+    --violet-glow:rgba(184, 141, 255, 0.30);
+
+    --font-ui:    "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    --font-mono:  "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--ink);
+    color: var(--paper);
+    font-family: var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+  }
+
+  body { padding: 32px 28px 64px; }
+
+  /* ---------- header ---------- */
+  .hdr {
+    max-width: 1640px;
+    margin: 0 auto 20px;
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 24px;
+  }
+  .hdr h1 {
+    font: 600 26px/1.2 var(--font-ui);
+    letter-spacing: -0.01em;
+    margin: 0 0 6px;
+  }
+  .hdr .sub {
+    font: 400 14px/1.5 var(--font-ui);
+    color: var(--paper-dim);
+    max-width: 760px;
+  }
+  .hdr .sub code {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--paper-soft);
+    background: var(--ink-soft);
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--ink-line);
+  }
+
+  .meta {
+    font: 500 11.5px/1.4 var(--font-mono);
+    color: var(--paper-dim);
+    text-align: right;
+    letter-spacing: 0.04em;
+  }
+  .meta b { color: var(--paper); font-weight: 600; }
+
+  /* ---------- canvas ---------- */
+  .canvas {
+    max-width: 1640px;
+    margin: 0 auto;
+    background: var(--ink-soft);
+    border: 1px solid var(--ink-line);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  svg.diagram {
+    display: block;
+    width: 100%;
+    height: auto;
+    font-family: var(--font-ui);
+  }
+
+  /* ---------- legend ---------- */
+  .legend {
+    max-width: 1640px;
+    margin: 22px auto 0;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0,1fr));
+    gap: 12px;
+  }
+  .legend .item {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 12px 14px;
+    background: var(--ink-soft);
+    border: 1px solid var(--ink-line);
+    border-radius: 4px;
+  }
+  .legend .swatch {
+    width: 14px; height: 14px;
+    flex-shrink: 0;
+    border-radius: 2px;
+    margin-top: 3px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .legend .txt b {
+    display: block;
+    font: 600 12.5px/1.3 var(--font-ui);
+    margin-bottom: 2px;
+    color: var(--paper);
+  }
+  .legend .txt span {
+    font: 400 12px/1.45 var(--font-ui);
+    color: var(--paper-dim);
+  }
+
+  /* ---------- assumptions ---------- */
+  .notes {
+    max-width: 1640px;
+    margin: 22px auto 0;
+    padding: 14px 16px;
+    background: var(--ink-soft);
+    border-left: 2px solid var(--amber);
+    border-radius: 0 4px 4px 0;
+    font: 400 12.5px/1.55 var(--font-ui);
+    color: var(--paper-dim);
+  }
+  .notes b { color: var(--paper); font-weight: 600; }
+  .notes code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--paper-soft);
+  }
+
+  /* ---------- svg-specific ---------- */
+  svg .label-title {
+    font: 600 12.5px var(--font-ui);
+    fill: var(--paper);
+  }
+  svg .label-sub {
+    font: 400 11px var(--font-ui);
+    fill: var(--paper-dim);
+  }
+  svg .label-mono {
+    font: 500 10.5px var(--font-mono);
+    fill: var(--paper-soft);
+    letter-spacing: 0.02em;
+  }
+  svg .lane-title {
+    font: 600 10.5px var(--font-mono);
+    letter-spacing: 0.18em;
+    fill: var(--paper-dim);
+  }
+  svg .card {
+    fill: #11151c;
+    stroke: var(--ink-line);
+    stroke-width: 1;
+  }
+  svg .card--accent {
+    stroke-width: 1.5;
+  }
+  svg .dot {
+    stroke: rgba(255,255,255,0.08);
+    stroke-width: 1;
+  }
+  svg .line {
+    fill: none;
+    stroke: var(--ink-mute);
+    stroke-width: 1.25;
+  }
+  svg .line--data {
+    stroke: var(--cool);
+    stroke-width: 1.5;
+    stroke-dasharray: none;
+  }
+  svg .line--ctrl {
+    stroke: var(--amber);
+    stroke-width: 1.25;
+    stroke-dasharray: 4 3;
+  }
+  svg .line--art {
+    stroke: var(--violet);
+    stroke-width: 1.25;
+    stroke-dasharray: 2 3;
+  }
+  svg .arrow {
+    fill: currentColor;
+  }
+  svg .station-rail {
+    stroke: var(--ink-mute);
+    stroke-width: 1;
+    fill: none;
+  }
+  svg text.tnum { font-variant-numeric: tabular-nums; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  @media (max-width: 1100px) {
+    .legend { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  }
+  @media (max-width: 720px) {
+    body { padding: 18px 14px 40px; }
+    .hdr { flex-direction: column; align-items: flex-start; }
+    .meta { text-align: left; }
+    .legend { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div>
+    <h1>Pi Software Factory · 架构图</h1>
+    <div class="sub">
+      多智能体软件工厂,基于 <code>pi-mono</code> 的 <code>@mariozechner/pi-agent-core</code>。
+      由 GitHub Issue 驱动,通过六个独立 Agent (每个拥有自己的 <code>SKILL.md</code>) 穿越完整的软件研发流水线,产出可合并的 PR。
+      用户面 CLI 已统一为 <code>factory</code>(<code>bin/factory.js</code>),工厂以预打包的 <code>dist/</code> 形式随 npm 发布。
+    </div>
+  </div>
+  <div class="meta">
+    <b>SCOPE</b> &nbsp; full pipeline + control panel<br/>
+    <b>RUN MODES</b> &nbsp; cloud · local daemon · cli · panel<br/>
+    <b>EXEC MODES</b> &nbsp; stub (test) · llm (MiniMax-M3 / Anthropic)
+  </div>
+</div>
+
+<div class="canvas">
+<svg class="diagram" viewBox="0 0 1640 1200" role="img" aria-labelledby="diagTitle diagDesc">
+  <title id="diagTitle">Pi Software Factory 架构图</title>
+  <desc id="diagDesc">
+    分层拓扑:顶部为四种入口(CLI、Webhook、本地守护进程、可视化面板),中部为工厂核心(编排器、六个 Agent、Agent 循环、工具与技能加载器、LLM 适配器),右侧为外部集成(目标 GitHub 仓库、Anthropic 兼容 LLM)。底部展示 Issue 流水线(Triage → Spec → Implementation → Review-PR → Verify-Behavior → Merge)。
+  </desc>
+
+  <!-- ===================== background grid (subtle) ===================== -->
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#1a202b" stroke-width="0.5"/>
+    </pattern>
+
+    <!-- arrowheads -->
+    <marker id="arr-cool" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5fb1ff"/>
+    </marker>
+    <marker id="arr-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#f3b34a"/>
+    </marker>
+    <marker id="arr-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b88dff"/>
+    </marker>
+
+    <!-- bulb gradients -->
+    <radialGradient id="bulbAmber" cx="50%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#ffd27a"/>
+      <stop offset="55%" stop-color="#f3b34a"/>
+      <stop offset="100%" stop-color="#9a6a1a"/>
+    </radialGradient>
+    <radialGradient id="bulbCool" cx="50%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#9ccaff"/>
+      <stop offset="55%" stop-color="#5fb1ff"/>
+      <stop offset="100%" stop-color="#1d4d80"/>
+    </radialGradient>
+    <radialGradient id="bulbSignal" cx="50%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#86e9a7"/>
+      <stop offset="55%" stop-color="#4ad17a"/>
+      <stop offset="100%" stop-color="#1f6a3c"/>
+    </radialGradient>
+    <radialGradient id="bulbViolet" cx="50%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#d9c2ff"/>
+      <stop offset="55%" stop-color="#b88dff"/>
+      <stop offset="100%" stop-color="#5b3d99"/>
+    </radialGradient>
+    <radialGradient id="bulbAlert" cx="50%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#ff8e98"/>
+      <stop offset="55%" stop-color="#e35d6a"/>
+      <stop offset="100%" stop-color="#7a1f28"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1640" height="1200" fill="url(#grid)"/>
+
+  <!-- ===================== lane titles (left margin) ===================== -->
+  <g transform="translate(28,0)">
+    <text class="lane-title" transform="translate(0,150) rotate(-90)">01 · 入口</text>
+    <text class="lane-title" transform="translate(0,470) rotate(-90)">02 · 工厂核心</text>
+    <text class="lane-title" transform="translate(0,920) rotate(-90)">03 · Issue 流水线</text>
+  </g>
+
+  <!-- ===================== SECTION 1: ENTRIES ===================== -->
+  <g id="entries">
+    <!-- lane background -->
+    <rect x="80" y="92" width="1480" height="170" rx="6" fill="#0c1018" stroke="#1d2330" stroke-width="1"/>
+
+    <!-- entry cards -->
+    <!-- 1: factory CLI (unified entry) -->
+    <g transform="translate(108,116)">
+      <rect class="card card--accent" width="240" height="122" rx="4" stroke="#5fb1ff"/>
+      <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbCool)"/>
+      <text class="label-title" x="40" y="26">factory CLI</text>
+      <text class="label-sub" x="40" y="44">bin/factory.js · npm 全局命令</text>
+      <line x1="14" y1="60" x2="226" y2="60" stroke="#222836" stroke-width="1"/>
+      <text class="label-mono" x="14" y="78">factory install &lt;target&gt;</text>
+      <text class="label-mono" x="14" y="94">factory start  [--panel]</text>
+      <text class="label-mono" x="14" y="110">factory panel  ·  uninstall</text>
+    </g>
+
+    <!-- 2: GitHub Webhook -->
+    <g transform="translate(372,116)">
+      <rect class="card" width="240" height="122" rx="4"/>
+      <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbViolet)"/>
+      <text class="label-title" x="40" y="26">GitHub Webhook</text>
+      <text class="label-sub" x="40" y="44">issues / labeled / pull_request</text>
+      <line x1="14" y1="60" x2="226" y2="60" stroke="#222836" stroke-width="1"/>
+      <text class="label-mono" x="14" y="78">issues.opened     → runForIssue</text>
+      <text class="label-mono" x="14" y="94">issues.labeled    → spec / impl</text>
+      <text class="label-mono" x="14" y="110">pull_request.open → review-pr</text>
+    </g>
+
+    <!-- 3: Local daemon -->
+    <g transform="translate(636,116)">
+      <rect class="card" width="240" height="122" rx="4"/>
+      <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbAmber)"/>
+      <text class="label-title" x="40" y="26">Local Daemon</text>
+      <text class="label-sub" x="40" y="44">长驻轮询;密钥不出本机</text>
+      <line x1="14" y1="60" x2="226" y2="60" stroke="#222836" stroke-width="1"/>
+      <text class="label-mono" x="14" y="78">scripts/factory-daemon.mjs</text>
+      <text class="label-mono" x="14" y="94">--local-dir · --interval 5</text>
+      <text class="label-mono" x="14" y="110">--webhook-port · --daily</text>
+    </g>
+
+    <!-- 4: Control panel -->
+    <g transform="translate(900,116)">
+      <rect class="card card--accent" width="260" height="122" rx="4" stroke="#5fb1ff"/>
+      <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbCool)"/>
+      <text class="label-title" x="40" y="26">Control Panel</text>
+      <text class="label-sub" x="40" y="44">Vite + React + TS · Conveyor 可视化</text>
+      <line x1="14" y1="60" x2="246" y2="60" stroke="#222836" stroke-width="1"/>
+      <text class="label-mono" x="14" y="78">dev : vite @ :5174</text>
+      <text class="label-mono" x="14" y="94">prod: bin/factory-panel.js</text>
+      <text class="label-mono" x="14" y="110">/api/{projects,events,agents,…}</text>
+    </g>
+
+    <!-- 5: Installer / Build pipeline -->
+    <g transform="translate(1184,116)">
+      <rect class="card" width="220" height="122" rx="4"/>
+      <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbSignal)"/>
+      <text class="label-title" x="40" y="26">Build · Install</text>
+      <text class="label-sub" x="40" y="44">把工厂打包 + 落到目标仓库</text>
+      <line x1="14" y1="60" x2="206" y2="60" stroke="#222836" stroke-width="1"/>
+      <text class="label-mono" x="14" y="78">build-factory.mjs  → esbuild</text>
+      <text class="label-mono" x="14" y="94">build-panel.mjs    → vite</text>
+      <text class="label-mono" x="14" y="110">install-factory.mjs (mode both)</text>
+    </g>
+
+    <!-- 6: Cloud CI (5 workflow YAMLs) -->
+    <g transform="translate(1432,116)">
+      <rect class="card" width="120" height="122" rx="4"/>
+      <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbViolet)"/>
+      <text class="label-title" x="40" y="26" style="font-size:11.5px">Cloud CI</text>
+      <text class="label-sub" x="40" y="44">GitHub Actions</text>
+      <line x1="14" y1="60" x2="106" y2="60" stroke="#222836" stroke-width="1"/>
+      <text class="label-mono" x="14" y="78">templates/</text>
+      <text class="label-mono" x="14" y="94">  workflows/</text>
+      <text class="label-mono" x="14" y="110">    *.yml ×5</text>
+    </g>
+
+    <!-- arrows from entries → factory core (single fan-in) -->
+    <path class="line--data" d="M228,238 C228,300 540,300 600,328" marker-end="url(#arr-cool)"/>
+    <path class="line--data" d="M492,238 C492,300 540,300 600,328" marker-end="url(#arr-cool)"/>
+    <path class="line--data" d="M756,238 C756,300 660,300 640,328" marker-end="url(#arr-cool)"/>
+    <path class="line--data" d="M1030,238 C1030,300 800,300 740,328" marker-end="url(#arr-cool)"/>
+    <path class="line--ctrl" d="M1294,238 C1294,290 1180,290 1180,328" marker-end="url(#arr-amber)"/>
+    <path class="line--ctrl" d="M1492,238 C1492,290 1320,300 1300,328" marker-end="url(#arr-amber)"/>
+
+    <!-- lane label -->
+    <text class="lane-title" x="100" y="84">ENTRIES</text>
+  </g>
+
+  <!-- ===================== SECTION 2: FACTORY CORE ===================== -->
+  <g id="core">
+
+    <!-- outer core frame -->
+    <rect x="80" y="328" width="1140" height="600" rx="6" fill="#0a0e15" stroke="#1d2330" stroke-width="1"/>
+
+    <!-- ---------- orchestrator (top center) ---------- -->
+    <g transform="translate(360,344)">
+      <rect class="card card--accent" width="580" height="84" rx="4" stroke="#f3b34a"/>
+      <circle class="dot" cx="22" cy="24" r="7" fill="url(#bulbAmber)"/>
+      <text class="label-title" x="40" y="28" style="font-size:14px">FactoryOrchestrator</text>
+      <text class="label-sub" x="40" y="46">src/orchestrator/index.ts · 事件驱动的状态机 (EventEmitter)</text>
+      <text class="label-mono" x="22" y="66">loaders: 6×SKILL.md  →  agents: 6×BaseAgent  →  emit: triage | spec | impl | review | verify | merged</text>
+      <text class="label-mono" x="22" y="80" fill="#9aa3b5">状态机按 GitHub issue 标签驱动;Verify 仅作 advisory (只阻止 blocked)</text>
+    </g>
+
+    <!-- control arrows from entries converge on orchestrator (already drawn above) -->
+
+    <!-- ---------- agent conveyor (middle) ---------- -->
+    <g id="agents" transform="translate(110,452)">
+      <!-- background rail -->
+      <line class="station-rail" x1="50" y1="118" x2="1070" y2="118"/>
+
+      <!-- station 1: triage -->
+      <g transform="translate(20,38)">
+        <rect class="card" width="160" height="160" rx="4"/>
+        <circle cx="80" cy="80" r="14" fill="url(#bulbCool)" stroke="#0c1018" stroke-width="2"/>
+        <text class="label-title" x="80" y="46" text-anchor="middle">Triage</text>
+        <text class="label-sub" x="80" y="62" text-anchor="middle">状态分类</text>
+        <text class="label-mono" x="10" y="108" text-anchor="start">fetch_issue</text>
+        <text class="label-mono" x="10" y="122" text-anchor="start">read_file</text>
+        <text class="label-mono" x="10" y="136" text-anchor="start">update_issue_labels</text>
+        <text class="label-mono" x="10" y="150" text-anchor="start">post_issue_comment</text>
+      </g>
+
+      <!-- station 2: spec -->
+      <g transform="translate(196,38)">
+        <rect class="card" width="160" height="160" rx="4"/>
+        <circle cx="80" cy="80" r="14" fill="url(#bulbAmber)" stroke="#0c1018" stroke-width="2"/>
+        <text class="label-title" x="80" y="46" text-anchor="middle">Spec</text>
+        <text class="label-sub" x="80" y="62" text-anchor="middle">写产品/技术规格</text>
+        <text class="label-mono" x="10" y="108" text-anchor="start">write_file · write-</text>
+        <text class="label-mono" x="10" y="122" text-anchor="start">  product-spec.md</text>
+        <text class="label-mono" x="10" y="136" text-anchor="start">write_file · write-</text>
+        <text class="label-mono" x="10" y="150" text-anchor="start">  tech-spec.md</text>
+        <!-- split badge -->
+        <rect x="118" y="6" width="36" height="14" rx="3" fill="#f3b34a" fill-opacity="0.18" stroke="#f3b34a" stroke-width="1"/>
+        <text x="136" y="16" text-anchor="middle" font-size="9" font-family="JetBrains Mono, monospace" fill="#f3b34a">SPLIT</text>
+      </g>
+
+      <!-- station 3: implementation -->
+      <g transform="translate(372,38)">
+        <rect class="card card--accent" width="160" height="160" rx="4" stroke="#5fb1ff"/>
+        <circle cx="80" cy="80" r="14" fill="url(#bulbCool)" stroke="#0c1018" stroke-width="2"/>
+        <text class="label-title" x="80" y="46" text-anchor="middle">Implementation</text>
+        <text class="label-sub" x="80" y="62" text-anchor="middle">写代码 + 测试 + 提 PR</text>
+        <text class="label-mono" x="10" y="108" text-anchor="start">read/write_file</text>
+        <text class="label-mono" x="10" y="122" text-anchor="start">run_shell · grep_repo</text>
+        <text class="label-mono" x="10" y="136" text-anchor="start">commit_and_push</text>
+        <text class="label-mono" x="10" y="150" text-anchor="start">open_pull_request</text>
+      </g>
+
+      <!-- station 4: review-pr -->
+      <g transform="translate(548,38)">
+        <rect class="card" width="160" height="160" rx="4"/>
+        <circle cx="80" cy="80" r="14" fill="url(#bulbSignal)" stroke="#0c1018" stroke-width="2"/>
+        <text class="label-title" x="80" y="46" text-anchor="middle">Review-PR</text>
+        <text class="label-sub" x="80" y="62" text-anchor="middle">规则审查 + verdict</text>
+        <text class="label-mono" x="10" y="108" text-anchor="start">run_shell · git diff</text>
+        <text class="label-mono" x="10" y="122" text-anchor="start">grep_repo (规则)</text>
+        <text class="label-mono" x="10" y="136" text-anchor="start">→ verdict:</text>
+        <text class="label-mono" x="10" y="150" text-anchor="start">  APPROVE | REJECT</text>
+      </g>
+
+      <!-- station 5: verify-behavior -->
+      <g transform="translate(724,38)">
+        <rect class="card" width="160" height="160" rx="4"/>
+        <circle cx="80" cy="80" r="14" fill="url(#bulbViolet)" stroke="#0c1018" stroke-width="2"/>
+        <text class="label-title" x="80" y="46" text-anchor="middle">Verify-Behavior</text>
+        <text class="label-sub" x="80" y="62" text-anchor="middle">UI/可视化真实浏览器验证</text>
+        <text class="label-mono" x="10" y="108" text-anchor="start">playwright (可选)</text>
+        <text class="label-mono" x="10" y="122" text-anchor="start">real-verify.ts</text>
+        <text class="label-mono" x="10" y="136" text-anchor="start">→ status:</text>
+        <text class="label-mono" x="10" y="150" text-anchor="start">  verified | blocked</text>
+      </g>
+
+      <!-- station 6: improve-review-pr (outer loop) -->
+      <g transform="translate(900,38)">
+        <rect class="card" width="160" height="160" rx="4"/>
+        <circle cx="80" cy="80" r="14" fill="url(#bulbAmber)" stroke="#0c1018" stroke-width="2"/>
+        <text class="label-title" x="80" y="46" text-anchor="middle">Improve-</text>
+        <text class="label-title" x="80" y="61" text-anchor="middle">Review-PR</text>
+        <text class="label-sub" x="80" y="76" text-anchor="middle">每日巡检 · 改 review 规则</text>
+        <text class="label-mono" x="10" y="108" text-anchor="start">collect-feedback</text>
+        <text class="label-mono" x="10" y="122" text-anchor="start">daily scheduled</text>
+        <text class="label-mono" x="10" y="136" text-anchor="start">→ skillPrUrl</text>
+        <text class="label-mono" x="10" y="150" text-anchor="start">  learnings: [...]</text>
+      </g>
+
+      <!-- arrows between stations on rail -->
+      <g stroke="#3a4356" fill="#3a4356">
+        <polygon points="190,118 178,113 178,123"/>
+        <polygon points="366,118 354,113 354,123"/>
+        <polygon points="542,118 530,113 530,123"/>
+        <polygon points="718,118 706,113 706,123"/>
+        <polygon points="894,118 882,113 882,123"/>
+      </g>
+
+      <!-- loop-back arrow from improve → review (signals skill self-improvement) -->
+      <path class="line--art" d="M1000,30 C1000,-6 700,-12 628,30" marker-end="url(#arr-violet)"/>
+      <text class="label-mono" x="720" y="-18" fill="#b88dff">改进后的 SKILL.md 反馈给 Review-PR ↑</text>
+
+      <!-- split arrow: spec station → external GitHub target repo
+           (gh issue create --label ready-to-implement for each sub-issue) -->
+      <path class="line--ctrl" d="M276,30 C276,-30 380,-44 470,-44 C620,-44 1100,-44 1264,360" marker-end="url(#arr-amber)"/>
+      <text class="label-mono" x="500" y="-30" fill="#f3b34a">⚡ splitInto → gh issue create × N → 子 Issue 回流到 Triage</text>
+    </g>
+
+    <!-- ---------- core framework (bottom row) ---------- -->
+    <g id="framework" transform="translate(110,684)">
+      <!-- base agent loop -->
+      <g transform="translate(0,0)">
+        <rect class="card" width="320" height="220" rx="4"/>
+        <text class="label-title" x="18" y="26">BaseAgent · pi-style loop</text>
+        <text class="label-sub" x="18" y="44">src/core/agent.ts · plan → tool → observe → act → finalize</text>
+
+        <!-- loop diagram -->
+        <g transform="translate(160,118)">
+          <circle r="58" fill="#11151c" stroke="#2b3242" stroke-width="1"/>
+          <circle r="40" fill="none" stroke="#3a4356" stroke-dasharray="3 3" stroke-width="1"/>
+          <text class="label-mono" x="0" y="-26" text-anchor="middle">plan</text>
+          <text class="label-mono" x="34" y="-6" text-anchor="middle">tool</text>
+          <text class="label-mono" x="0" y="14" text-anchor="middle">observe</text>
+          <text class="label-mono" x="-34" y="-6" text-anchor="middle">act</text>
+          <text class="label-mono" x="0" y="34" text-anchor="middle">finalize</text>
+        </g>
+        <text class="label-mono" x="18" y="200" fill="#9aa3b5">maxIter=12 · AgentPlan = tool | finish</text>
+      </g>
+
+      <!-- skill loader -->
+      <g transform="translate(340,0)">
+        <rect class="card" width="220" height="220" rx="4"/>
+        <text class="label-title" x="18" y="26">SkillLoader</text>
+        <text class="label-sub" x="18" y="44">运行时读 dist/ 下预解析的 JSON</text>
+        <line x1="14" y1="60" x2="206" y2="60" stroke="#222836" stroke-width="1"/>
+        <text class="label-mono" x="18" y="82">dist/factory/skills/</text>
+        <text class="label-mono" x="32" y="98">triage.json</text>
+        <text class="label-mono" x="32" y="114">spec.json</text>
+        <text class="label-mono" x="32" y="130">implementation.json</text>
+        <text class="label-mono" x="32" y="146">review-pr.json</text>
+        <text class="label-mono" x="32" y="162">verify-behavior.json</text>
+        <text class="label-mono" x="32" y="178">improve-review-pr.json</text>
+        <text class="label-sub" x="18" y="200">构建期由 build-factory.mjs 预解析</text>
+      </g>
+
+      <!-- tools registry -->
+      <g transform="translate(580,0)">
+        <rect class="card" width="280" height="220" rx="4"/>
+        <text class="label-title" x="18" y="26">Tool Registry</text>
+        <text class="label-sub" x="18" y="44">src/core/tools.ts · 同一组原语,跨 Agent 复用</text>
+        <line x1="14" y1="60" x2="266" y2="60" stroke="#222836" stroke-width="1"/>
+        <text class="label-mono" x="18" y="82">read_file · write_file</text>
+        <text class="label-mono" x="18" y="98">list_dir · grep_repo</text>
+        <text class="label-mono" x="18" y="114">run_shell · fetch_issue</text>
+        <text class="label-mono" x="18" y="130">post_issue_comment</text>
+        <text class="label-mono" x="18" y="146">update_issue_labels</text>
+        <text class="label-mono" x="18" y="162">commit_and_push · open_pull_request</text>
+        <text class="label-sub" x="18" y="190" style="font-size:10.5px">每个 Agent 只 register 自己需要的子集</text>
+        <text class="label-mono" x="18" y="208" fill="#9aa3b5">win32 → powershell.exe  · else → bash</text>
+      </g>
+
+      <!-- llm adapter -->
+      <g transform="translate(880,0)">
+        <rect class="card card--accent" width="200" height="220" rx="4" stroke="#b88dff"/>
+        <text class="label-title" x="18" y="26">LLM Adapter</text>
+        <text class="label-sub" x="18" y="44">runLlmAgent · core/llm-agent.ts</text>
+        <line x1="14" y1="60" x2="186" y2="60" stroke="#222836" stroke-width="1"/>
+        <text class="label-mono" x="18" y="82">stub  → 规则引擎</text>
+        <text class="label-mono" x="18" y="98">llm   → @mariozechner/</text>
+        <text class="label-mono" x="18" y="114">       pi-agent-core</text>
+        <text class="label-mono" x="18" y="134" fill="#9aa3b5">ANTHROPIC_AUTH_TOKEN</text>
+        <text class="label-mono" x="18" y="150" fill="#9aa3b5">ANTHROPIC_BASE_URL</text>
+        <text class="label-mono" x="18" y="166" fill="#9aa3b5">ANTHROPIC_MODEL</text>
+        <text class="label-sub" x="18" y="194" style="font-size:10.5px">两种模式产出同样的</text>
+        <text class="label-sub" x="18" y="208" style="font-size:10.5px">typed result,测试无感</text>
+      </g>
+    </g>
+
+    <!-- orchestrator → agents (down arrow) -->
+    <path class="line--data" d="M650,424 C650,440 650,452 650,452" marker-end="url(#arr-cool)"/>
+  </g>
+
+  <!-- ===================== SECTION 3: EXTERNAL (right column) ===================== -->
+  <g id="externals">
+    <rect x="1240" y="328" width="320" height="600" rx="6" fill="#0a0e15" stroke="#1d2330" stroke-width="1"/>
+    <text class="lane-title" x="1260" y="320">EXTERNAL</text>
+
+    <!-- GitHub target repo -->
+    <g transform="translate(1264,348)">
+      <rect class="card" width="272" height="252" rx="4"/>
+      <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbSignal)"/>
+      <text class="label-title" x="40" y="26">Target GitHub Repo</text>
+      <text class="label-sub" x="40" y="44">被工厂改写的真实仓库</text>
+      <line x1="14" y1="60" x2="258" y2="60" stroke="#222836" stroke-width="1"/>
+      <text class="label-mono" x="18" y="84">工作目录 (workdir)</text>
+      <text class="label-mono" x="18" y="100" fill="#c8cfdc">  git clone → main</text>
+      <text class="label-mono" x="18" y="124">分支</text>
+      <text class="label-mono" x="18" y="140" fill="#c8cfdc">  feature/issue-N-slug</text>
+      <text class="label-mono" x="18" y="164">Primitives</text>
+      <text class="label-mono" x="18" y="180" fill="#c8cfdc">  git · gh CLI</text>
+      <text class="label-mono" x="18" y="200">产物</text>
+      <text class="label-mono" x="18" y="216" fill="#c8cfdc">  commits · PRs · labels</text>
+      <text class="label-mono" x="18" y="240" fill="#f3b34a">⚠ factory/ 由 :!factory 排除</text>
+    </g>
+
+    <!-- LLM provider -->
+    <g transform="translate(1264,600)">
+      <rect class="card card--accent" width="272" height="140" rx="4" stroke="#b88dff"/>
+      <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbViolet)"/>
+      <text class="label-title" x="40" y="26">Anthropic-compatible LLM</text>
+      <text class="label-sub" x="40" y="44">推理来自网络,本地代理</text>
+      <line x1="14" y1="60" x2="258" y2="60" stroke="#222836" stroke-width="1"/>
+      <text class="label-mono" x="18" y="82">默认:</text>
+      <text class="label-mono" x="18" y="98" fill="#c8cfdc">  MiniMax-M3</text>
+      <text class="label-mono" x="18" y="118">base_url</text>
+      <text class="label-mono" x="18" y="134" fill="#c8cfdc">  https://api.minimaxi.com/anthropic</text>
+    </g>
+
+    <!-- Disk state (.factory/) -->
+    <g transform="translate(1264,760)">
+      <rect class="card" width="272" height="162" rx="4"/>
+      <circle class="dot" cx="22" cy="22" r="6" fill="url(#bulbAmber)"/>
+      <text class="label-title" x="40" y="26">Local State (.factory/)</text>
+      <text class="label-sub" x="40" y="44">控制面板的“单一事实来源”</text>
+      <line x1="14" y1="60" x2="258" y2="60" stroke="#222836" stroke-width="1"/>
+      <text class="label-mono" x="18" y="82">state/N.json         每条 Issue 流水线结果</text>
+      <text class="label-mono" x="18" y="98">daemon.log           ISO LEVEL stage msg {...}</text>
+      <text class="label-mono" x="18" y="114">state-improve-review-pr.json</text>
+      <text class="label-mono" x="18" y="130">last-improve-review-pr  ·  issue-N.json</text>
+      <text class="label-mono" x="18" y="146">pr_diff.txt · pr_description.txt</text>
+    </g>
+
+    <!-- arrows: orchestrator → target repo (commit/pr/labels) -->
+    <path class="line--ctrl" d="M880,400 C1080,400 1180,440 1264,460" marker-end="url(#arr-amber)"/>
+    <text class="label-mono" x="1010" y="392" fill="#f3b34a">commit · push · PR · labels</text>
+
+    <!-- arrow: framework → llm -->
+    <path class="line--art" d="M1190,810 C1230,760 1240,720 1264,680" marker-end="url(#arr-violet)"/>
+    <text class="label-mono" x="1180" y="820" fill="#b88dff">tool calls ·</text>
+    <text class="label-mono" x="1180" y="836" fill="#b88dff">final JSON</text>
+
+    <!-- arrow: disk state → control panel -->
+    <path class="line--data" d="M1264,830 C1240,830 1220,200 1160,200" marker-end="url(#arr-cool)"/>
+  </g>
+
+  <!-- ===================== SECTION 4: PIPELINE TIMELINE ===================== -->
+  <!-- viewBox height expanded below from 1180 → 1200 to fit the new fork and legend text -->
+  <g id="pipeline">
+    <rect x="80" y="960" width="1480" height="180" rx="6" fill="#0c1018" stroke="#1d2330" stroke-width="1"/>
+
+    <text class="lane-title" x="100" y="952">PIPELINE TIMELINE · parent may split into N sub-issues at the spec station</text>
+
+    <!-- split-fork illustration: amber fork rising from the spec node, fanning out to three sub-issues -->
+    <path class="line--ctrl" d="M620,1054 C620,1078 620,1095 660,1100" stroke-width="1" fill="none"/>
+    <circle cx="660" cy="1100" r="3.5" fill="#f3b34a"/>
+    <path class="line--ctrl" d="M660,1100 L780,1086" stroke-width="1" fill="none" marker-end="url(#arr-amber)"/>
+    <path class="line--ctrl" d="M660,1100 L780,1100" stroke-width="1" fill="none" marker-end="url(#arr-amber)"/>
+    <path class="line--ctrl" d="M660,1100 L780,1114" stroke-width="1" fill="none" marker-end="url(#arr-amber)"/>
+    <text class="label-mono" x="788" y="1089" fill="#f3b34a">sub #A (ready-to-implement)</text>
+    <text class="label-mono" x="788" y="1103" fill="#f3b34a">sub #B (ready-to-implement)</text>
+    <text class="label-mono" x="788" y="1117" fill="#f3b34a">sub #C (ready-to-implement)</text>
+
+    <!-- timeline rail -->
+    <line x1="180" y1="1054" x2="1450" y2="1054" stroke="#3a4356" stroke-width="1.25"/>
+
+    <!-- 6 nodes evenly spaced -->
+    <!-- positions: 200, 410, 620, 830, 1040, 1250, gap to 1450 -->
+    <g>
+      <!-- 1 new issue -->
+      <circle cx="180" cy="1054" r="9" fill="url(#bulbCool)" stroke="#0c1018" stroke-width="2"/>
+      <text class="label-title" x="180" y="1020" text-anchor="middle">new issue</text>
+      <text class="label-sub" x="180" y="1036" text-anchor="middle">GitHub / fixture</text>
+
+      <!-- 2 triage -->
+      <circle cx="400" cy="1054" r="9" fill="url(#bulbCool)" stroke="#0c1018" stroke-width="2"/>
+      <text class="label-title" x="400" y="1020" text-anchor="middle">triage</text>
+      <text class="label-sub" x="400" y="1036" text-anchor="middle">label · comment</text>
+
+      <!-- 3 spec (optional) -->
+      <circle cx="620" cy="1054" r="9" fill="url(#bulbAmber)" stroke="#0c1018" stroke-width="2"/>
+      <text class="label-title" x="620" y="1020" text-anchor="middle">spec</text>
+      <text class="label-sub" x="620" y="1036" text-anchor="middle">conditional</text>
+
+      <!-- 4 implementation -->
+      <circle cx="830" cy="1054" r="9" fill="url(#bulbCool)" stroke="#0c1018" stroke-width="2"/>
+      <text class="label-title" x="830" y="1020" text-anchor="middle">implementation</text>
+      <text class="label-sub" x="830" y="1036" text-anchor="middle">branch + test</text>
+
+      <!-- 5 review-pr -->
+      <circle cx="1050" cy="1054" r="9" fill="url(#bulbSignal)" stroke="#0c1018" stroke-width="2"/>
+      <text class="label-title" x="1050" y="1020" text-anchor="middle">review-pr</text>
+      <text class="label-sub" x="1050" y="1036" text-anchor="middle">APPROVE gate</text>
+
+      <!-- 6 verify-behavior (advisory) -->
+      <circle cx="1250" cy="1054" r="9" fill="url(#bulbViolet)" stroke="#0c1018" stroke-width="2"/>
+      <text class="label-title" x="1250" y="1020" text-anchor="middle">verify-behavior</text>
+      <text class="label-sub" x="1250" y="1036" text-anchor="middle">advisory</text>
+
+      <!-- 7 merged -->
+      <circle cx="1450" cy="1054" r="9" fill="url(#bulbSignal)" stroke="#0c1018" stroke-width="2"/>
+      <text class="label-title" x="1450" y="1020" text-anchor="middle">merged PR</text>
+      <text class="label-sub" x="1450" y="1036" text-anchor="middle">done</text>
+    </g>
+
+    <!-- arrows between timeline nodes -->
+    <g stroke="#5fb1ff" fill="#5fb1ff">
+      <polygon points="195,1054 184,1050 184,1058"/>
+      <polygon points="415,1054 404,1050 404,1058"/>
+      <polygon points="635,1054 624,1050 624,1058" fill="#f3b34a" stroke="#f3b34a"/>
+      <polygon points="845,1054 834,1050 834,1058"/>
+      <polygon points="1065,1054 1054,1050 1054,1058"/>
+      <polygon points="1265,1054 1254,1050 1254,1058" fill="#b88dff" stroke="#b88dff"/>
+      <polygon points="1440,1054 1429,1050 1429,1058"/>
+    </g>
+
+    <!-- legend below timeline -->
+    <g transform="translate(180,1138)" font-size="10.5" font-family="JetBrains Mono, monospace" fill="#9aa3b5">
+      <text x="0" y="0">状态机:issue 标签驱动。Ready to implement 可跳过 Spec;Verify 仅作 advisory(只阻止 blocked)。</text>
+      <text x="0" y="16">Improve-Review-PR 是日常外环,改进后的 SKILL.md 反馈给 Review-PR(见上方紫色虚线)。</text>
+      <text x="0" y="32" fill="#f3b34a">⚡ SpecAgent.finalize() 可返回 splitInto:N 条子 issue 由 gh issue create 落地,各自带 ready-to-implement 标签进入下一轮 pipeline。</text>
+    </g>
+  </g>
+
+</svg>
+</div>
+
+<div class="legend">
+  <div class="item">
+    <span class="swatch" style="background:#5fb1ff"></span>
+    <div class="txt">
+      <b>蓝色实线 · 数据流</b>
+      <span>Issue payload、API 请求、Agent→Tool 调用、Control Panel 读盘。</span>
+    </div>
+  </div>
+  <div class="item">
+    <span class="swatch" style="background:#f3b34a"></span>
+    <div class="txt">
+      <b>琥珀色虚线 · 控制流</b>
+      <span>Agent 编排、状态转移、commit/push、merge 决策。</span>
+    </div>
+  </div>
+  <div class="item">
+    <span class="swatch" style="background:#b88dff"></span>
+    <div class="txt">
+      <b>紫色点线 · LLM 推理</b>
+      <span>送往 Anthropic 兼容 API 的 tool-calls,以及 Improve-Review-PR 的外环自反馈。</span>
+    </div>
+  </div>
+  <div class="item">
+    <span class="swatch" style="background:#4ad17a"></span>
+    <div class="txt">
+      <b>绿色 · 通过 / 终态</b>
+      <span>APPROVE、verified、merged PR 等表示成功的灯泡。</span>
+    </div>
+  </div>
+</div>
+
+<div class="notes">
+  <b>主要简化与假设</b>　· 　将六 Agent 平铺为 conveyor,而实现里 Review-PR 与 Verify-Behavior 串接在 Implementation 之后、Improve-Review-PR 是独立的日级外环(紫色虚线表示这一回流路径)。
+  　· 　BaseAgent loop 单独抽出一张 mini 图,实际每个 Agent 是 BaseAgent 的子类,plan/act/finalize 由子类实现。
+  　· 　外部三块(GitHub Repo / LLM Provider / 本地 <code>.factory/</code> state)在原代码里以函数 / 文件 API 形式分散;此图把它们归集到右侧"EXTERNAL"列,以表达它们的来源不同(GitHub 网络、LLM HTTP、磁盘)。
+  　· 　用户面 CLI 已统一为 <code>bin/factory.js</code>(子命令 <code>install · start · panel · uninstall</code>),它内部 spawn <code>factory-daemon.mjs</code> 与 <code>bin/factory-panel.js</code> 作为子进程,故入口层把这三者画成一张统一的"factory CLI"卡片。
+  　· 　构建产物(<code>dist/factory/orchestrator.js</code> + <code>dist/factory/skills/*.json</code> + <code>dist/panel/</code>)通过 <code>build-factory.mjs</code>(esbuild)与 <code>build-panel.mjs</code>(vite)产出,在 npm tarball 里随包发布;SkillLoader 运行时只读 <code>dist/factory/skills/*.json</code>。
+  　· 　<code>factory/</code> 子目录是安装器把 runner 自身源码复制进目标 workdir 的结果,通过 <code>git diff ... -- :!factory</code> 路径过滤从审查 diff 中排除,避免误触发审查规则。
+</div>
+
+</body>
+</html>

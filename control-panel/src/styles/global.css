@@ -1,0 +1,100 @@
+@import "./tokens.css";
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+html {
+    background: var(--ink);
+    color-scheme: dark;
+}
+
+body {
+    font-family: var(--font-ui);
+    font-size: var(--text-base);
+    line-height: 1.5;
+    color: var(--text);
+    background: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+    font: inherit;
+    color: inherit;
+}
+
+button {
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
+
+a {
+    color: inherit;
+    text-decoration: none;
+}
+
+/* Mono is reserved for IDs, timestamps, file paths, log lines, and metric
+ * values — never for long-form prose. */
+.mono {
+    font-family: var(--font-display);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Tabular numbers everywhere — the dashboard reads metrics side-by-side. */
+.num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+}
+
+/* Selection */
+::selection {
+    background: var(--amber);
+    color: var(--ink);
+}
+
+/* Custom scrollbar — minimal, dark, mono-influenced. */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: var(--ink);
+}
+::-webkit-scrollbar-thumb {
+    background: var(--rail-2);
+    border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-low);
+}
+
+/* Focus — a single-pixel rail line in amber. No glow. */
+:focus-visible {
+    outline: 1px solid var(--amber);
+    outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        transition: none !important;
+        animation: none !important;
+    }
+}

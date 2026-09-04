@@ -13,13 +13,52 @@ export type TriageState =
   | "Needs info"
   | "Wait to implement";
 
-/** Triage label as applied on the GitHub issue. */
+/**
+ * Issue label as applied on GitHub. Together these form the workflow
+ * state machine: each agent reads the current label to decide which stage
+ * to run, and writes the next label when it finishes.
+ *
+ *   (no label)        --[triage]--> ready-to-spec / ready-to-implement / needs-info / wait-to-implement
+ *   ready-to-spec     --[spec]-----> spec-ready-for-review | ready-to-implement (if split)
+ *   spec-ready-for-review --[human review]--> ready-to-implement (manual)
+ *   ready-to-implement --[impl]--> review-needed
+ *   review-needed     --[review]--> ready-to-merge | changes-requested
+ *   changes-requested --[impl]--> review-needed
+ *   ready-to-merge    --[verify]--> verified | verify-failed
+ *   verify-failed     --[impl]--> review-needed
+ *   verified          --[merge]--> (label cleared)
+ *
+ * Unknown labels fall through to triage so the factory self-heals after
+ * manual operator changes.
+ */
 export type TriageLabel =
   | "ready-to-implement"
   | "ready-to-spec"
+  | "spec-ready-for-review"
   | "needs-info"
   | "wait-to-implement"
-  | "spec-ready-for-review";
+  | "review-needed"
+  | "ready-to-merge"
+  | "verified"
+  | "verify-failed"
+  | "changes-requested";
+
+/**
+ * All labels the factory ever writes. Used to remove stale labels on
+ * every transition so the issue's label set matches its current stage.
+ */
+export const ALL_FACTORY_LABELS: ReadonlyArray<TriageLabel> = [
+  "ready-to-implement",
+  "ready-to-spec",
+  "spec-ready-for-review",
+  "needs-info",
+  "wait-to-implement",
+  "review-needed",
+  "ready-to-merge",
+  "verified",
+  "verify-failed",
+  "changes-requested",
+];
 
 /** Triage agent output. Mirrors the demo's JSON contract exactly. */
 export interface TriageResult {
@@ -89,6 +128,12 @@ export interface SpecPair {
   tech: TechSpec;
   specBranch: string;
   specPrUrl: string;
+  /**
+   * Optional list of sub-issues to create when the spec is too big to
+   * ship in one PR. When present, the parent advances to
+   * ready-to-implement after each sub-issue is created on GitHub.
+   */
+  splitInto?: Array<{ title: string; body: string }>;
 }
 
 /** Implementation agent output. */

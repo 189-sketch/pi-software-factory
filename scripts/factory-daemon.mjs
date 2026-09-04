@@ -447,30 +447,41 @@ async function processIssue(issue, stage = "") {
     ANTHROPIC_MODEL,
   };
 
+  // Pipeline runner: prefer the bundled orchestrator that ships in
+  // this package's dist/ (no tsx, no source copy). Fall back to tsx on
+  // source only when running from an unbuilt dev checkout.
+  const bundlePath = path.join(factoryRoot, "dist", "factory", "orchestrator.js");
   const cliPath = path.join(issueWorkdir, "factory", "src", "cli", "run-issue.ts");
   const cliRoot = path.join(issueWorkdir, "factory");
-  // tsx resolves relative to cliRoot: install-factory placed the prepared
-  // node_modules in <target>/factory/node_modules/. We also junction
-  // it into <workdir>/factory/node_modules via copyFactorySkeleton(), so
-  // either path works — pick whichever exists.
   const tsxCandidates = [
     path.join(cliRoot, "node_modules", "tsx", "dist", "cli.mjs"),
     path.join(factoryRoot, "factory", "node_modules", "tsx", "dist", "cli.mjs"),
     path.join(factoryRoot, "node_modules", "tsx", "dist", "cli.mjs"),
   ];
-  const tsxCli = tsxCandidates.find((p) => fsSync.existsSync(p))
-    || tsxCandidates[0];
-  log("INFO", "starting-pipeline", { issue: issue.number, workdir: issueWorkdir, factoryDir: cliRoot, tsx: tsxCli });
+  const tsxCli = tsxCandidates.find((p) => fsSync.existsSync(p)) || tsxCandidates[0];
+
+  let runner, cliFile;
+  if (fsSync.existsSync(bundlePath)) {
+    runner = process.execPath;
+    cliFile = bundlePath;
+    log("INFO", "starting-pipeline", { issue: issue.number, runner: "bundle", file: bundlePath });
+  } else if (fsSync.existsSync(cliPath)) {
+    runner = "node";
+    cliFile = tsxCli;
+    log("INFO", "starting-pipeline", { issue: issue.number, runner: "tsx", file: cliPath, tsx: tsxCli });
+  } else {
+    log("ERROR", "no-pipeline-runner", { bundlePath, cliPath, factoryRoot });
+    return null;
+  }
 
   let stdout = "", stderr = "";
   const exitCode = await new Promise((resolve) => {
     const childArgs = [
-      tsxCli,
-      cliPath,
+      cliFile,
       "--issue", issuePath,
     ];
     if (stage) childArgs.push("--stage", stage);
-    const child = spawn("node", childArgs, { cwd: issueWorkdir, env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(runner, childArgs, { cwd: issueWorkdir, env, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout.on("data", (b) => stdout += b);
     child.stderr.on("data", (b) => stderr += b);
     child.on("error", (error) => {

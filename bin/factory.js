@@ -1,0 +1,270 @@
+#!/usr/bin/env node
+/**
+ * factory — the main CLI entry.
+ *
+ * Subcommands:
+ *   install <target> [--mode local|cloud|both] [--repo owner/name]
+ *     Configure a target repo with .factory-daemon/ (config + start
+ *     scripts). No source copy; the daemon + panel binaries come from
+ *     this npm package.
+ *
+ *   start [--panel] [--port 5174] [--interval 30]
+ *     Run the local daemon. With --panel, starts the control panel in a
+ *     background child process and prints its URL.
+ *
+ *   panel [--port 5174]
+ *     Run the control panel server only.
+ *
+ *   uninstall <target>
+ *     Remove .factory-daemon/ from a target.
+ *
+ *   --help / -h
+ *     Show this help.
+ */
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import readline from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const packageRoot = path.resolve(__dirname, "..");
+
+const HELP = `Usage:
+  factory install <target> [--mode local|cloud|both] [--repo owner/name]
+  factory start [--panel] [--port 5174] [--interval 30]
+  factory panel [--port 5174]
+  factory uninstall <target>
+  factory --help
+
+A target is the path to a git repo where you want the factory to run.
+The factory itself ships pre-built; nothing is copied into the target
+except thin config files under .factory-daemon/.
+`;
+
+function parseArgs(argv) {
+    const out = { _: [] };
+    for (let i = 0; i < argv.length; i++) {
+        const a = argv[i];
+        if (a.startsWith("--")) {
+            const eq = a.indexOf("=");
+            if (eq >= 0) {
+                out[a.slice(2, eq)] = a.slice(eq + 1);
+            } else {
+                const next = argv[i + 1];
+                if (next && !next.startsWith("--")) {
+                    out[a.slice(2)] = next;
+                    i++;
+                } else {
+                    out[a.slice(2)] = true;
+                }
+            }
+        } else if (a === "-h") {
+            out.help = true;
+        } else {
+            out._.push(a);
+        }
+    }
+    return out;
+}
+
+const args = parseArgs(process.argv.slice(2));
+const cmd = args._[0];
+
+function pkgRoot() {
+    return packageRoot;
+}
+
+function resolvePackagePath(rel) {
+    return path.join(packageRoot, rel);
+}
+
+function resolveBinPath(name) {
+    return path.join(packageRoot, "bin", name);
+}
+
+function spawnChild(cmd, args, opts = {}) {
+    const child = spawn(cmd, args, {
+        stdio: "inherit",
+        ...opts,
+    });
+    child.on("exit", (code) => process.exit(code ?? 0));
+    return child;
+}
+
+/**
+ * Forward POSIX signals from the parent (factory CLI) to a spawned child
+ * (daemon or panel). On Windows Node treats the equivalent signals as
+ * SIGTERM, which still kills the child but cannot be propagated through
+ * `tree-kill` from this code path — the simplest portable behavior is
+ * "best-effort": send SIGTERM on the first signal we get, SIGKILL on
+ * the second.
+ */
+function forwardSignals(child) {
+    let killed = false;
+    const forward = (sig) => {
+        if (killed) return;
+        if (sig === "SIGINT" || sig === "SIGTERM") {
+            killed = true;
+            try { child.kill("SIGTERM"); } catch { /* already exited */ }
+        } else if (sig === "SIGHUP") {
+            // SIGHUP is a hangup notification; on the daemon it's safe
+            // to just let it die.
+            try { child.kill("SIGTERM"); } catch { /* noop */ }
+        }
+    };
+    for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+        process.on(sig, () => forward(sig));
+    }
+    // Last-resort escalation: if the child doesn't exit after 5s, kill
+    // it harder. Windows has no SIGKILL; Taskkill /F handles that path
+    // in production where the parent is `start.cmd`.
+    child.on("exit", () => {
+        for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+            process.removeAllListeners(sig);
+        }
+    });
+}
+
+async function installCommand() {
+    const target = args._[1];
+    if (!target) {
+        console.error("Error: install needs a target repo path.");
+        console.error("Example: factory install ../my-app --");
+        process.exit(1);
+    }
+    if (args.help) {
+        process.stdout.write(HELP);
+        return;
+    }
+
+    // Defer to the dedicated installer module — it owns the dotenv,
+    // systemd unit, and env-template logic and has been battle-tested.
+    const installerPath = resolvePackagePath("scripts/install-factory.mjs");
+    if (!existsSync(installerPath)) {
+        console.error(`Error: installer not found at ${ installerPath }`);
+        process.exit(1);
+    }
+    const installerArgs = [target, "--mode", String(args.mode ?? "local")];
+    if (args.repo) installerArgs.push("--repo", String(args.repo));
+
+    const child = spawn(process.execPath, [installerPath, ...installerArgs], {
+        stdio: "inherit",
+    });
+    child.on("exit", (code) => process.exit(code ?? 0));
+}
+
+async function startCommand() {
+    if (args.help || args.h) {
+        process.stdout.write(HELP);
+        return;
+    }
+
+    // Start the daemon as a foreground process. With --panel, fork the
+    // panel as a background child and print its URL when it's ready.
+    const daemonScript = resolvePackagePath("scripts/factory-daemon.mjs");
+    const daemonArgs = [];
+    if (args.interval) daemonArgs.push("--interval", String(args.interval));
+    if (args.localDir) daemonArgs.push("--local-dir", String(args.localDir));
+    if (args.webhookPort) daemonArgs.push("--webhook-port", String(args.webhookPort));
+    if (args.envFile) daemonArgs.push("--env-file", String(args.envFile));
+    if (args.stateDir) daemonArgs.push("--state-dir", String(args.stateDir));
+
+    let panelChild = null;
+    if (args.panel) {
+        const panelScript = resolveBinPath("factory-panel.js");
+        const panelArgs = [];
+        if (args.port) panelArgs.push("--port", String(args.port));
+        panelChild = spawn(process.execPath, [panelScript, ...panelArgs], {
+            stdio: ["ignore", "pipe", "pipe"],
+            detached: false,
+        });
+        panelChild.stdout?.on("data", (b) => {
+            const s = b.toString();
+            process.stdout.write(`[panel] ${ s }`);
+            const m = s.match(/http:\/\/localhost:(\d+)/);
+            if (m && !process.env.FACTORY_PANEL_URL) {
+                process.env.FACTORY_PANEL_URL = `http://localhost:${ m[1] }`;
+                console.error(`\nControl panel ready at http://localhost:${ m[1] }`);
+            }
+        });
+        panelChild.stderr?.on("data", (b) => process.stderr.write(`[panel] ${ b.toString() }`));
+    }
+
+    const daemon = spawn(process.execPath, [daemonScript, ...daemonArgs], {
+        stdio: "inherit",
+    });
+
+    // Forward signals so Ctrl+C, kill, etc. reach the daemon child.
+    // Without this, the child daemon survives parent termination on
+    // POSIX, and Windows gets a dangling node.exe.
+    forwardSignals(daemon);
+
+    daemon.on("exit", (code, signal) => {
+        if (panelChild && !panelChild.killed) panelChild.kill("SIGTERM");
+        // Match the daemon's exit signal so callers can tell whether it
+        // was killed by a signal or exited cleanly.
+        if (signal) process.kill(process.pid, signal);
+        else process.exit(code ?? 0);
+    });
+}
+
+async function panelCommand() {
+    if (args.help || args.h) {
+        process.stdout.write(HELP);
+        return;
+    }
+    spawnChild(process.execPath, [resolveBinPath("factory-panel.js")], {
+        stdio: "inherit",
+    });
+}
+
+async function uninstallCommand() {
+    const target = args._[1];
+    if (!target) {
+        console.error("Error: uninstall needs a target repo path.");
+        process.exit(1);
+    }
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const daemonDir = path.join(path.resolve(target), ".factory-daemon");
+    if (!existsSync(daemonDir)) {
+        console.error(`No .factory-daemon/ found in ${ target }`);
+        process.exit(1);
+    }
+    await fs.rm(daemonDir, { recursive: true, force: true });
+    console.log(`✓ Removed ${ daemonDir }`);
+    console.log("  Other files (skills, factory/) were never touched.");
+}
+
+function showHelp() {
+    process.stdout.write(HELP);
+}
+
+switch (cmd) {
+    case "install":
+        installCommand();
+        break;
+    case "start":
+        startCommand();
+        break;
+    case "panel":
+        panelCommand();
+        break;
+    case "uninstall":
+        uninstallCommand();
+        break;
+    case "help":
+        showHelp();
+        break;
+    case undefined:
+    case "--help":
+    case "-h":
+        showHelp();
+        break;
+    default:
+        console.error(`Unknown command: ${ cmd }`);
+        process.stdout.write(HELP);
+        process.exit(1);
+}
