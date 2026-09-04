@@ -8,13 +8,20 @@
  *   tsx src/cli/run-issue.ts --webhook 8080   (starts the webhook server)
  */
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { FactoryOrchestrator } from "../orchestrator/index.js";
 import { loadIssues } from "../github/local.js";
 import { startWebhookServer } from "../github/webhook.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const skillsRoot = path.join(__dirname, "..", "..", "skills");
+// Resolve the skills root at runtime so the same CLI works in both
+//   - source layout: <repo>/skills/                 (../../skills from src/cli)
+//   - bundle layout: <pkg>/dist/factory/skills/     (./skills from dist/factory)
+// SkillLoader inside falls back from SKILL.md to .json so either layout
+// loads the same set of skills.
+const skillsRoot = [path.join(__dirname, "..", "..", "skills"), path.join(__dirname, "skills")]
+    .find((candidate) => existsSync(candidate)) ?? path.join(__dirname, "..", "..", "skills");
 const fixturesDir = path.join(__dirname, "..", "..", "fixtures", "issues");
 
 async function main(): Promise<void> {

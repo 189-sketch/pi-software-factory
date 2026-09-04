@@ -13,7 +13,7 @@
 npm install
 npm run build
 npm pack
-npm install --global .\software-factory-cli-0.1.0.tgz
+npm install --global .\mustangai-software-factory-cli-0.1.0.tgz
 factory --help
 ```
 
@@ -36,11 +36,19 @@ node .\bin\factory.js --help
 factory install E:\ai\open\pi-software-factory-target --mode local --repo 189-sketch/pi-software-factory-target --non-interactive
 ```
 
-安装创建或更新 `factory/` 运行时及依赖、`.agents/skills/`、`.factory-daemon/` 和 `FACTORY_DAEMON.md`。
-安装器将运行时、`.factory/` 状态和 `.factory-daemon/.env` 加入目标仓库的 `.gitignore`；已经被 Git 跟踪的密钥文件仍需自行处置。
-重复安装保留已有 `.factory-daemon/.env`，但会更新工厂管理的运行时文件。
+安装做 3 件事：
+
+1. **装 npm 包**：`npm install @mustangai/software-factory-cli` 在目标仓库根（dev 依赖）。
+2. **写本地守护进程包装**：`.factory-daemon/start.sh` + `start.cmd` + `.env`（chmod 600）+ systemd unit + Windows service installer。
+3. **追加 `.gitignore`**：`.factory-daemon/.env`（密钥）+ `.factory/`（运行时状态）。**不再向目标仓库复制源码**——所有运行时都来自 `node_modules/@mustangai/software-factory-cli/`。
+
+被替换的旧行为（仍然受支持但不再需要）：`.agents/skills/` + `factory/` 子目录的复制。如果你的目标仓库里还有遗留的 `factory/` 子目录（来自旧版 install），删除即可；新版 install 不会自动清理。
+
+`factory install --mode cloud` 还会把 GitHub Actions workflow 模板从 npm 包的 `templates/github/workflows/` 拷到 `.github/workflows/`。
 依赖安装失败会明确报错，此时不要继续启动。
-`--non-interactive` 跳过凭据输入，不会自动生成有效凭据。
+`--non-interactive` 跳过凭据输入，会写出 `REPLACE_ME` 占位符的 `.env`，由你稍后填入。
+重复安装保留已有 `.factory-daemon/.env`。
+安装器不修改 `package.json` 之外的其他文件；已经被 Git 跟踪的密钥文件仍需自行处置。
 
 ## 配置真实运行环境
 

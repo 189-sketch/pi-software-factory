@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import net from "node:net";
@@ -41,30 +42,55 @@ test("packed CLI installs, runs once and daily, serves the panel, and preserves 
   const npm = (args, cwd = root) => exec(process.execPath, [npmCli, ...args], { cwd, env, timeout: 90000, maxBuffer: 4 * 1024 * 1024 });
   const packed = JSON.parse((await npm(["pack", "--json", "--pack-destination", root], source)).stdout)[0];
   const packageFiles = new Set(packed.files.map((file) => file.path));
-  for (const file of ["scripts/install-factory.mjs", "scripts/factory-daemon.mjs", "scripts/collect-feedback.mjs", "skills/triage/SKILL.md", "src/cli/run-issue.ts", "dist/factory/run-issue.js", "dist/panel/index.html"]) {
+  for (const file of [
+    "bin/factory.js",
+    "bin/factory-panel.js",
+    "scripts/factory-daemon.mjs",
+    "scripts/install-windows-service.ps1",
+    "dist/factory/run-issue.js",
+    "dist/factory/orchestrator.js",
+    "dist/panel/index.html",
+    "templates/github/workflows/triage-issues.yml",
+  ]) {
     assert.ok(packageFiles.has(file), `missing package runtime file: ${file}`);
+  }
+  // Source-only files that must NOT ship in the npm tarball — install no
+  // longer copies them to the target, the package is the only runtime
+  // artifact users receive.
+  for (const file of ["src/cli/run-issue.ts", "skills/triage/SKILL.md"]) {
+    assert.ok(!packageFiles.has(file), `forbidden package file: ${file}`);
   }
   await fs.writeFile(path.join(root, "package.json"), '{"private":true}');
   await npm(["install", path.join(root, packed.filename), "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"]);
   const help = await npm(["exec", "--offline", "--", "factory", "--help"]);
   assert.match(help.stdout, /factory start/);
   t.diagnostic("packed npm executable installed and --help passed");
-  const installed = path.join(root, "node_modules/software-factory-cli");
+  const installed = path.join(root, "node_modules/@mustangai/software-factory-cli");
   const cli = path.join(installed, "bin/factory.js");
   const target = path.join(root, "target repo");
   await fs.mkdir(target);
   await exec("git", ["init", target], { env });
   const run = (args) => exec(process.execPath, ["--", cli, ...args], { cwd: target, env, timeout: 90000, maxBuffer: 4 * 1024 * 1024 });
-  await run(["install", target, "--mode", "local", "--repo", "example/target", "--non-interactive"]);
+  // Pass --package so install uses the local tarball we just packed
+  // (install-factory.mjs runs `npm install <pkg>` which would otherwise
+  // hit the public registry). npm install runs with cwd=target, so the
+  // tarball path must be absolute or it won't resolve.
+  const tarballPath = path.join(root, packed.filename);
+  await run(["install", target, "--mode", "local", "--repo", "example/target", "--non-interactive", "--package", tarballPath]);
   const envPath = path.join(target, ".factory-daemon/.env");
   const credentials = "# preserved test configuration\nFACTORY_AGENT_MODE=stub\n";
   await fs.writeFile(envPath, credentials);
-  await run(["install", target, "--mode", "local", "--repo", "example/target", "--non-interactive"]);
+  await run(["install", target, "--mode", "local", "--repo", "example/target", "--non-interactive", "--package", tarballPath]);
   assert.equal(await fs.readFile(envPath, "utf8"), credentials);
   const ignored = await exec("git", ["check-ignore", ".factory-daemon/.env", ".factory/state-14.json"], { cwd: target, env });
   assert.match(ignored.stdout, /\.factory-daemon\/\.env/);
   assert.match(ignored.stdout, /\.factory\/state-14.json/);
-  assert.ok(await fs.stat(path.join(target, "factory/node_modules/tsx/dist/cli.mjs")));
+  // Daemon script lives in node_modules; .factory-daemon/ is just wrappers.
+  assert.ok(await fs.stat(path.join(installed, "scripts/factory-daemon.mjs")));
+  assert.ok(!existsSync(path.join(target, ".factory-daemon/factory-daemon.mjs")));
+  // Start wrapper points at the installed daemon script.
+  const startSh = await fs.readFile(path.join(target, ".factory-daemon/start.sh"), "utf8");
+  assert.match(startSh, /node_modules\/@mustangai\/software-factory-cli\/scripts\/factory-daemon\.mjs/);
   t.diagnostic("install, reinstall, dependency setup and credential preservation passed");
 
   const safe = ["--no-env-file", "--no-fallback-env", "--workdir", path.join(root, "work")];
@@ -82,10 +108,13 @@ test("packed CLI installs, runs once and daily, serves the panel, and preserves 
   assert.equal(daily.summary.decision, "no_changes");
   t.diagnostic("bundled start --once and start --daily passed");
 
-  // Installed legacy wrapper uses the real tsx fallback, not the package bundle.
-  const legacy = await exec(process.execPath, ["--", path.join(target, ".factory-daemon/factory-daemon.mjs"), "--daily", ...safe], { cwd: target, env, timeout: 30000 });
-  assert.match(legacy.stdout, /"runner":"tsx"/);
-  t.diagnostic("installed daemon tsx fallback passed");
+  // The installed daemon resolves its CLI entry from the npm package's
+  // bundle (no factory/ subdir, no tsx fallback). Spawn the wrapper's
+  // daemon path directly to confirm.
+  const installedDaemon = path.join(installed, "scripts/factory-daemon.mjs");
+  const installedRun = await exec(process.execPath, ["--", installedDaemon, "--daily", ...safe], { cwd: target, env, timeout: 30000 });
+  assert.match(installedRun.stdout, /"runner":"bundle"/);
+  t.diagnostic("installed daemon uses the package bundle directly");
 
   for (const combined of [false, true]) {
     const probe = net.createServer();

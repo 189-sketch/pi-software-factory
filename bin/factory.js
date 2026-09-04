@@ -3,7 +3,7 @@
  * factory — the main CLI entry.
  *
  * Subcommands:
- *   install <target> [--mode local|cloud|both] [--repo owner/name]
+ *   install <target> [--mode local|cloud|both] [--repo owner/name] [--package <name-or-tarball>]
  *     Configure a target repo with .factory-daemon/ (config + start
  *     scripts) and a factory/ runtime copy.
  *
@@ -31,7 +31,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(__dirname, "..");
 
 const HELP = `Usage:
-  factory install <target> [--mode local|cloud|both] [--repo owner/name] [--non-interactive]
+  factory install <target> [--mode local|cloud|both] [--repo owner/name] [--package <name-or-tarball>] [--non-interactive]
   factory start [--repo owner/name] [--panel] [--port 5174] [--interval 30]
                 [--once | --daily] [--local-dir path] [--workdir path]
                 [--state-dir path] [--env-file path] [--webhook-port 8080]
@@ -152,6 +152,7 @@ async function installCommand() {
     }
     const installerArgs = [target, "--mode", String(args.mode ?? "local")];
     if (args.repo) installerArgs.push("--repo", String(args.repo));
+    if (args.package) installerArgs.push("--package", String(args.package));
     if (args["non-interactive"]) installerArgs.push("--non-interactive");
     if (args["install-service"]) installerArgs.push("--install-service");
 
