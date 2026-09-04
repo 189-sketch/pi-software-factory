@@ -1,5 +1,5 @@
 {
-  "name": "@mustangai/software-factory-cli",
+  "name": "software-factory-cli",
   "version": "0.1.0",
   "description": "Multi-agent software factory — installer, local daemon, and control panel as a single CLI.",
   "type": "module",
@@ -12,8 +12,8 @@
     "url": "https://github.com/189-sketch/software-factory/issues"
   },
   "bin": {
-    "factory": "./bin/factory.js",
-    "factory-panel": "./bin/factory-panel.js"
+    "factory": "bin/factory.js",
+    "factory-panel": "bin/factory-panel.js"
   },
   "main": "dist/factory/orchestrator.js",
   "exports": {

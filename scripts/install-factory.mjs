@@ -20,12 +20,12 @@
  *   node scripts/install-factory.mjs /path/to/to/target-repo --mode both
  *
  * What this installer does:
- *   - Installs @mustangai/software-factory-cli into the target repo via
+ *   - Installs software-factory-cli into the target repo via
  *     npm (no source copy — the source is open on GitHub; the npm
  *     package is the runtime artifact)
  *   - Writes .factory-daemon/ with start.sh + start.cmd + systemd /
  *     launchd / Windows service units that spawn the daemon from
- *     node_modules/@mustangai/software-factory-cli/scripts/factory-daemon.mjs
+ *     node_modules/software-factory-cli/scripts/factory-daemon.mjs
  *   - Writes .factory-daemon/.env (chmod 600) with the user's secrets
  *   - Wires the local daemon (only if --mode=local|both):
  *       * creates .factory-daemon/ with start.sh + factory-daemon.service
@@ -52,7 +52,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const factoryRoot = path.resolve(__dirname, "..");
 
 // The published package name. Keep in sync with package.json#name.
-const PACKAGE_NAME = "@mustangai/software-factory-cli";
+const PACKAGE_NAME = "software-factory-cli";
 
 function parseArgs(argv) {
     const out = { _: [] };
@@ -261,7 +261,7 @@ async function main() {
         // dotenv quirks.
         const startSh = `#!/usr/bin/env bash
 # Start the factory daemon. .env is loaded by the daemon itself.
-# Daemon lives in node_modules/@mustangai/software-factory-cli (installed by npm).
+# Daemon lives in node_modules/software-factory-cli (installed by npm).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 exec node "${daemonScriptInPkg}" "$@"
@@ -274,7 +274,7 @@ exec node "${daemonScriptInPkg}" "$@"
         const startCmd = `@echo off
 REM Start the factory daemon. .env is loaded by the daemon itself.
 REM Usage:  start.cmd [extra args forwarded to factory-daemon.mjs]
-REM Daemon lives in node_modules\\@mustangai\\software-factory-cli (installed by npm).
+REM Daemon lives in node_modules\\software-factory-cli (installed by npm).
 setlocal
 cd /D "%~dp0\\.."
 where node >nul 2>nul
@@ -343,15 +343,15 @@ FACTORY_POLL_INTERVAL=30
 
 This target repo has the **software-factory** daemon installed under
 \`.factory-daemon/\`. The daemon itself lives in
-\`node_modules/@mustangai/software-factory-cli/scripts/factory-daemon.mjs\`
+\`node_modules/software-factory-cli/scripts/factory-daemon.mjs\`
 and is wired up by the wrappers here.
 
 ## Install / upgrade
 
 The factory is published as the npm package
-\`@mustangai/software-factory-cli\` (source on GitHub:
+\`software-factory-cli\` (source on GitHub:
 [189-sketch/software-factory](https://github.com/189-sketch/software-factory)).
-Upgrade by re-running \`npm install @mustangai/software-factory-cli\` —
+Upgrade by re-running \`npm install software-factory-cli\` —
 the wrappers and env template in this directory stay put.
 
 ## Run manually

@@ -2,7 +2,7 @@ name: Review Pull Requests (multi-agent)
 
 # Triggers the review-pr agent when a PR is opened or updated. The agent
 # writes review.json; the publish job posts the GitHub review from it.
-# Uses the @mustangai/software-factory-cli npm package; no source copy.
+# Uses the software-factory-cli npm package; no source copy.
 
 on:
   pull_request:
@@ -24,12 +24,12 @@ jobs:
           node-version: "20"
 
       - name: Install factory package
-        run: npm install @mustangai/software-factory-cli --no-audit --no-fund
+        run: npm install software-factory-cli --no-audit --no-fund
 
       - name: Generate annotated diff
         run: |
           git diff -U3 origin/${{ github.base_ref }}...HEAD > raw_diff.txt
-          node node_modules/@mustangai/software-factory-cli/scripts/annotate-diff.mjs --input raw_diff.txt --output pr_diff.txt
+          node node_modules/software-factory-cli/scripts/annotate-diff.mjs --input raw_diff.txt --output pr_diff.txt
 
       - name: Run review-pr agent
         run: |
@@ -37,10 +37,10 @@ jobs:
           cat > /tmp/factory/issue.json <<EOF
           { "number": "${{ github.event.pull_request.number }}", "title": "${{ github.event.pull_request.title }}", "body": "${{ github.event.pull_request.body }}", "labels": [], "author": "${{ github.event.pull_request.user.login }}", "url": "${{ github.event.pull_request.html_url }}", "createdAt": "${{ github.event.pull_request.created_at }}", "comments": [] }
           EOF
-          node node_modules/@mustangai/software-factory-cli/dist/factory/run-issue.js --issue /tmp/factory/issue.json
+          node node_modules/software-factory-cli/dist/factory/run-issue.js --issue /tmp/factory/issue.json
 
       - name: Validate review.json
-        run: node node_modules/@mustangai/software-factory-cli/scripts/validate-review.mjs
+        run: node node_modules/software-factory-cli/scripts/validate-review.mjs
 
       - name: Publish GitHub review
         env:

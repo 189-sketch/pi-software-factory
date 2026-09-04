@@ -1,7 +1,7 @@
 name: Spec Ready Issues (multi-agent)
 
 # Triggers the spec agent when an issue is labeled `ready-to-spec`.
-# Uses the @mustangai/software-factory-cli npm package; no source copy.
+# Uses the software-factory-cli npm package; no source copy.
 
 on:
   issues:
@@ -22,7 +22,7 @@ jobs:
           node-version: "20"
 
       - name: Install factory package
-        run: npm install @mustangai/software-factory-cli --no-audit --no-fund
+        run: npm install software-factory-cli --no-audit --no-fund
 
       - name: Run spec agent
         env:
@@ -35,4 +35,4 @@ jobs:
           cat > /tmp/factory/issue.json <<EOF
           { "number": "$ISSUE_NUMBER", "title": "$ISSUE_TITLE", "body": "$ISSUE_BODY", "labels": ["ready-to-spec"], "author": "issue-bot", "url": "${{ github.event.issue.html_url }}", "createdAt": "${{ github.event.issue.created_at }}", "comments": [] }
           EOF
-          node node_modules/@mustangai/software-factory-cli/dist/factory/run-issue.js --issue /tmp/factory/issue.json
+          node node_modules/software-factory-cli/dist/factory/run-issue.js --issue /tmp/factory/issue.json

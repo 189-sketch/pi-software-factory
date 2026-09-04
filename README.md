@@ -13,7 +13,7 @@
 npm install
 npm run build
 npm pack
-npm install --global .\mustangai-software-factory-cli-0.1.0.tgz
+npm install --global .\software-factory-cli-0.1.0.tgz
 factory --help
 ```
 
@@ -38,9 +38,9 @@ factory install E:\ai\open\pi-software-factory-target --mode local --repo 189-sk
 
 安装做 3 件事：
 
-1. **装 npm 包**：`npm install @mustangai/software-factory-cli` 在目标仓库根（dev 依赖）。
+1. **装 npm 包**：`npm install software-factory-cli` 在目标仓库根（dev 依赖）。
 2. **写本地守护进程包装**：`.factory-daemon/start.sh` + `start.cmd` + `.env`（chmod 600）+ systemd unit + Windows service installer。
-3. **追加 `.gitignore`**：`.factory-daemon/.env`（密钥）+ `.factory/`（运行时状态）。**不再向目标仓库复制源码**——所有运行时都来自 `node_modules/@mustangai/software-factory-cli/`。
+3. **追加 `.gitignore`**：`.factory-daemon/.env`（密钥）+ `.factory/`（运行时状态）。**不再向目标仓库复制源码**——所有运行时都来自 `node_modules/software-factory-cli/`。
 
 被替换的旧行为（仍然受支持但不再需要）：`.agents/skills/` + `factory/` 子目录的复制。如果你的目标仓库里还有遗留的 `factory/` 子目录（来自旧版 install），删除即可；新版 install 不会自动清理。
 

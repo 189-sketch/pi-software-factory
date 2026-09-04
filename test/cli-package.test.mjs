@@ -65,7 +65,7 @@ test("packed CLI installs, runs once and daily, serves the panel, and preserves 
   const help = await npm(["exec", "--offline", "--", "factory", "--help"]);
   assert.match(help.stdout, /factory start/);
   t.diagnostic("packed npm executable installed and --help passed");
-  const installed = path.join(root, "node_modules/@mustangai/software-factory-cli");
+  const installed = path.join(root, "node_modules/software-factory-cli");
   const cli = path.join(installed, "bin/factory.js");
   const target = path.join(root, "target repo");
   await fs.mkdir(target);
@@ -90,7 +90,7 @@ test("packed CLI installs, runs once and daily, serves the panel, and preserves 
   assert.ok(!existsSync(path.join(target, ".factory-daemon/factory-daemon.mjs")));
   // Start wrapper points at the installed daemon script.
   const startSh = await fs.readFile(path.join(target, ".factory-daemon/start.sh"), "utf8");
-  assert.match(startSh, /node_modules\/@mustangai\/software-factory-cli\/scripts\/factory-daemon\.mjs/);
+  assert.match(startSh, /node_modules\/software-factory-cli\/scripts\/factory-daemon\.mjs/);
   t.diagnostic("install, reinstall, dependency setup and credential preservation passed");
 
   const safe = ["--no-env-file", "--no-fallback-env", "--workdir", path.join(root, "work")];

@@ -7,7 +7,7 @@ name: Triage New Issues (multi-agent)
 # issue: write.
 #
 # The factory is published as the npm package
-# @mustangai/software-factory-cli. Source on GitHub:
+# software-factory-cli. Source on GitHub:
 # https://github.com/189-sketch/software-factory. Installing via npm
 # means no source copy in this repo and no separate `factory/` subdir.
 
@@ -37,7 +37,7 @@ jobs:
           node-version: "20"
 
       - name: Install factory package
-        run: npm install @mustangai/software-factory-cli --no-audit --no-fund
+        run: npm install software-factory-cli --no-audit --no-fund
 
       - name: Run triage agent
         id: run_agent
@@ -51,7 +51,7 @@ jobs:
           cat > /tmp/factory/issue.json <<EOF
           { "number": "$ISSUE_NUMBER", "title": "$ISSUE_TITLE", "body": "$ISSUE_BODY", "labels": [], "author": "${{ github.event.issue.user.login }}", "url": "${{ github.event.issue.html_url }}", "createdAt": "${{ github.event.issue.created_at }}", "comments": [] }
           EOF
-          node node_modules/@mustangai/software-factory-cli/dist/factory/run-issue.js --issue /tmp/factory/issue.json > /tmp/factory/out.json 2>&1
+          node node_modules/software-factory-cli/dist/factory/run-issue.js --issue /tmp/factory/issue.json > /tmp/factory/out.json 2>&1
           cat /tmp/factory/out.json
           TRIAGE_JSON=$(node -e "const r=require('/tmp/factory/out.json'); console.log(JSON.stringify({state:r.triage,label:r.triage?.toLowerCase().replace(/ /g,'-'),remove_labels:[],comment:'See agent run for triage rationale.'}))" 2>/dev/null || echo "{}")
           echo "triage_result=$TRIAGE_JSON" >> "$GITHUB_OUTPUT"

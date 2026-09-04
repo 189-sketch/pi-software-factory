@@ -2,7 +2,7 @@ name: Improve Review PR (multi-agent)
 
 # Daily outer loop. Collects review feedback, synthesizes durable
 # learnings, and opens a skill-improvement PR when warranted.
-# Uses the @mustangai/software-factory-cli npm package; no source copy.
+# Uses the software-factory-cli npm package; no source copy.
 
 on:
   schedule:
@@ -24,7 +24,7 @@ jobs:
           node-version: "20"
 
       - name: Install factory package
-        run: npm install @mustangai/software-factory-cli --no-audit --no-fund
+        run: npm install software-factory-cli --no-audit --no-fund
 
       - name: Run improve-review-pr agent
         run: |
@@ -32,4 +32,4 @@ jobs:
           cat > /tmp/factory/issue.json <<EOF
           { "number": 0, "title": "Daily improve-review-pr", "body": "", "labels": [], "author": "scheduled", "url": "", "createdAt": "$(date -Iseconds)", "comments": [] }
           EOF
-          node node_modules/@mustangai/software-factory-cli/dist/factory/run-issue.js --issue /tmp/factory/issue.json
+          node node_modules/software-factory-cli/dist/factory/run-issue.js --issue /tmp/factory/issue.json
