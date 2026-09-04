@@ -151,12 +151,13 @@ async function main() {
     const gi = path.join(target, ".gitignore");
     let giText = "";
     if (existsSync(gi)) giText = readFileSync(gi, "utf-8");
-    const hasFactory = /(^|\r?\n)factory\/\s*(\r?\n|$)/.test(giText);
-    if (!hasFactory) {
+    const lines = new Set(giText.split(/\r?\n/).map((line) => line.trim()));
+    const missing = ["factory/", ".factory/", ".factory-daemon/.env"].filter((entry) => !lines.has(entry));
+    if (missing.length) {
       const sep = giText === "" || /\r?\n$/.test(giText) ? "" : "\n";
-      giText = `${giText}${sep}# factory runner (installed by pi-software-factory)\nfactory/\n`;
+      giText = `${giText}${sep}# factory runtime and local secrets (installed by software-factory)\n${missing.join("\n")}\n`;
       writeFileSync(gi, giText, "utf-8");
-      console.log("✓ Appended factory/ to .gitignore");
+      console.log("✓ Excluded factory runtime, state, and local secrets from git");
     }
   } catch (err) {
     console.warn(`⚠ Could not update .gitignore (${String(err).split("\n")[0]}); continuing install`);
@@ -181,9 +182,8 @@ async function main() {
     await fs.mkdir(daemonDir, { recursive: true });
     // Install daemon script.
     await fs.copyFile(path.join(factoryRoot, "scripts", "factory-daemon.mjs"), path.join(daemonDir, "factory-daemon.mjs"));
-    // npm install in factory/ so tsx is available (idempotent). Resolves
-    // npm from PATH so we don't need shell:true on Windows (avoids the
-    // Node 22+ deprecation warning + EINVAL).
+    // Invoke npm's JavaScript entry on Windows; spawning npm.cmd directly
+    // with shell:false fails. Do not report success if dependencies failed.
     try {
       const isWin = process.platform === "win32";
       let npmCmd;
@@ -205,12 +205,19 @@ async function main() {
         };
         npmCmd = findOnPath("npm.cmd");
       }
-      execFileSync(npmCmd || "npm", ["install"], {
+      const npmArgs = ["install", "--include=dev", "--no-audit", "--no-fund"];
+      if (isWin) {
+        const npmCli = path.join(path.dirname(npmCmd || process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+        npmArgs.unshift(npmCli);
+      }
+      execFileSync(isWin ? process.execPath : "npm", npmArgs, {
         cwd: path.join(target, "factory"),
-        stdio: "ignore",
+        stdio: "inherit",
         shell: false,
       });
-    } catch {}
+    } catch (error) {
+      throw new Error("Failed to install factory dependencies; fix npm install before starting the daemon.", { cause: error });
+    }
     // Wrapper start.sh (POSIX). The daemon itself loads .env via its built-in
     // --env-file loader — keeps the wrapper free of bash dotenv quirks.
     const startSh = `#!/usr/bin/env bash
@@ -355,8 +362,8 @@ Explicit values in \`.env\` always win; real shell env wins over \`.env\`;
 ## State
 
 Each processed issue writes:
-- \`.factory-daemon/state-<n>.json\` — full pipeline result
-- \`.factory-daemon/daemon.log\` — line-delimited JSON log
+- \`.factory/state-<n>.json\` - full pipeline result
+- \`.factory/daemon.log\` - timestamped log with structured fields
 `);
     console.log("✓ Wrote FACTORY_DAEMON.md");
   }

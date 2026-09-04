@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Pi Software Factory · 架构图</title>
+<title>Software Factory · 架构图</title>
 <style>
   /* ---------- design tokens (mirror control-panel) ---------- */
   :root {
@@ -180,17 +180,21 @@
     stroke: var(--ink-mute);
     stroke-width: 1.25;
   }
+  svg path[class^="line"] { fill: none; }
   svg .line--data {
+    fill: none;
     stroke: var(--cool);
     stroke-width: 1.5;
     stroke-dasharray: none;
   }
   svg .line--ctrl {
+    fill: none;
     stroke: var(--amber);
     stroke-width: 1.25;
     stroke-dasharray: 4 3;
   }
   svg .line--art {
+    fill: none;
     stroke: var(--violet);
     stroke-width: 1.25;
     stroke-dasharray: 2 3;
@@ -224,7 +228,7 @@
 
 <div class="hdr">
   <div>
-    <h1>Pi Software Factory · 架构图</h1>
+    <h1>Software Factory · 架构图</h1>
     <div class="sub">
       多智能体软件工厂,基于 <code>pi-mono</code> 的 <code>@mariozechner/pi-agent-core</code>。
       由 GitHub Issue 驱动,通过六个独立 Agent (每个拥有自己的 <code>SKILL.md</code>) 穿越完整的软件研发流水线,产出可合并的 PR。
@@ -240,7 +244,7 @@
 
 <div class="canvas">
 <svg class="diagram" viewBox="0 0 1640 1200" role="img" aria-labelledby="diagTitle diagDesc">
-  <title id="diagTitle">Pi Software Factory 架构图</title>
+  <title id="diagTitle">Software Factory 架构图</title>
   <desc id="diagDesc">
     分层拓扑:顶部为四种入口(CLI、Webhook、本地守护进程、可视化面板),中部为工厂核心(编排器、六个 Agent、Agent 循环、工具与技能加载器、LLM 适配器),右侧为外部集成(目标 GitHub 仓库、Anthropic 兼容 LLM)。底部展示 Issue 流水线(Triage → Spec → Implementation → Review-PR → Verify-Behavior → Merge)。
   </desc>
@@ -502,9 +506,12 @@
       <text class="label-mono" x="720" y="-18" fill="#b88dff">改进后的 SKILL.md 反馈给 Review-PR ↑</text>
 
       <!-- split arrow: spec station → external GitHub target repo
-           (gh issue create --label ready-to-implement for each sub-issue) -->
-      <path class="line--ctrl" d="M276,30 C276,-30 380,-44 470,-44 C620,-44 1100,-44 1264,360" marker-end="url(#arr-amber)"/>
-      <text class="label-mono" x="500" y="-30" fill="#f3b34a">⚡ splitInto → gh issue create × N → 子 Issue 回流到 Triage</text>
+           Routed through the empty strip BELOW the conveyor (agents y=200-225)
+           and ABOVE the framework row (agents y>=232), then curves UP into
+           Target GitHub Repo card's left edge at agents y=22. Avoids crossing
+           any card content. -->
+      <path class="line--ctrl" d="M276,200 C276,225 1154,225 1154,22" marker-end="url(#arr-amber)"/>
+      <text class="label-mono" x="500" y="220" fill="#f3b34a">⚡ splitInto → gh issue create × N → 子 Issue 回流到 Triage</text>
     </g>
 
     <!-- ---------- core framework (bottom row) ---------- -->

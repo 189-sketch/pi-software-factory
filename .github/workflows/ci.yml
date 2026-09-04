@@ -78,6 +78,6 @@ jobs:
                   mkdir -p /tmp/factory-smoke
                   cd /tmp/factory-smoke
                   npm init -y >/dev/null 2>&1
-                  npm install --no-audit --no-fund ${{ github.workspace }}/pi-software-factory-cli-0.1.0.tgz 2>&1 | tail -3
+                  npm install --no-audit --no-fund ${{ github.workspace }}/software-factory-cli-0.1.0.tgz 2>&1 | tail -3
                   npx factory --help | head -5
                   npx factory-panel --help 2>&1 | head -3 || true

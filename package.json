@@ -1,8 +1,16 @@
 {
-  "name": "pi-software-factory-cli",
+  "name": "software-factory-cli",
   "version": "0.1.0",
   "description": "Multi-agent software factory — installer, local daemon, and control panel as a single CLI.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/189-sketch/software-factory.git"
+  },
+  "homepage": "https://github.com/189-sketch/software-factory#readme",
+  "bugs": {
+    "url": "https://github.com/189-sketch/software-factory/issues"
+  },
   "bin": {
     "factory": "./bin/factory.js",
     "factory-panel": "./bin/factory-panel.js"
@@ -18,6 +26,11 @@
     "dist/factory",
     "dist/panel",
     "templates",
+    "scripts",
+    "src",
+    "skills",
+    "fixtures",
+    "tsconfig.json",
     "README.md",
     "LICENSE"
   ],
@@ -32,7 +45,8 @@
     "test": "node --import tsx --test --test-concurrency=1 src/__tests__/*.test.mjs src/__tests__/*.test.ts",
     "test:stub": "FACTORY_AGENT_MODE=stub node --import tsx --test --test-concurrency=1 src/__tests__/*.test.mjs src/__tests__/*.test.ts",
     "test:state": "FACTORY_AGENT_MODE=stub npx tsx --test test/workflow-state.test.mjs",
-    "test:fast": "node --import tsx --test test/workflow-state.test.mjs test/signal-forward.test.mjs"
+    "test:fast": "node --import tsx --test test/workflow-state.test.mjs test/signal-forward.test.mjs",
+    "test:cli": "npm run build && node --test test/cli-package.test.mjs"
   },
   "engines": {
     "node": ">=20"

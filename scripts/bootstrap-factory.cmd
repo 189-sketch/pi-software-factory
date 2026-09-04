@@ -8,7 +8,7 @@ REM
 REM Equivalent to bootstrap-factory.sh but for Windows cmd.
 
 setlocal EnableExtensions EnableDelayedExpansion
-set "FACTORY_REPO=189-sketch/pi-software-factory"
+set "FACTORY_REPO=189-sketch/software-factory"
 set "FACTORY_BRANCH=main"
 for %%I in ("%~dp0..") do set "LOCAL_FACTORY_ROOT=%%~fI"
 

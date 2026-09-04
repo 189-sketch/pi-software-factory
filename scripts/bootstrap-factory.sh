@@ -2,7 +2,7 @@
 # bootstrap-factory.sh — single-command factory setup + start.
 #
 # Usage:
-#   bash <(curl -fsSL https://raw.githubusercontent.com/189-sketch/pi-software-factory/main/scripts/bootstrap-factory.sh)
+#   bash <(curl -fsSL https://raw.githubusercontent.com/189-sketch/software-factory/main/scripts/bootstrap-factory.sh)
 #   bash <(curl -fsSL ... ) /path/to/target --repo owner/name [--mode cloud|local|both] [--start]
 #
 # What this does:
@@ -18,7 +18,7 @@
 #   2 user aborted
 set -euo pipefail
 
-FACTORY_REPO="189-sketch/pi-software-factory"
+FACTORY_REPO="189-sketch/software-factory"
 FACTORY_BRANCH="${FACTORY_BRANCH:-main}"
 INSTALL_URL="https://raw.githubusercontent.com/${FACTORY_REPO}/${FACTORY_BRANCH}/scripts/install-factory.mjs"
 

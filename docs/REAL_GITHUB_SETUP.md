@@ -30,7 +30,7 @@ When set, the implementation agent calls `gh pr create` to open a real PR.
 ```bash
 # Clone the factory
 git clone <this-repo>
-cd pi-software-factory
+cd software-factory
 npm install
 
 # Make sure your target repo is initialized with a roadmap + vision (the
@@ -52,7 +52,7 @@ git remote add origin git@github.com:<owner>/<repo>.git
 git push -u origin main
 
 # Run the factory
-cd /path/to/pi-software-factory
+cd /path/to/software-factory
 export GH_TOKEN="$(gh auth token)"
 export FACTORY_GH_REPO="<owner>/<repo>"
 FACTORY_REMOTE_PATH="git@github.com:<owner>/<repo>.git" \

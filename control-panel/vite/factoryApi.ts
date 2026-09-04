@@ -137,9 +137,9 @@ async function readProjects(
         path.join(root, "package.json"),
     );
     const repoFromPkg = (() => {
-        if (!pkg?.repository) return "189-sketch/pi-software-factory";
+        if (!pkg?.repository) return "189-sketch/software-factory";
         if (typeof pkg.repository === "string") return pkg.repository;
-        return pkg.repository.url ?? "189-sketch/pi-software-factory";
+        return pkg.repository.url ?? "189-sketch/software-factory";
     })();
     // Prefer the directory basename over the npm package name — for a
     // control panel, the repo name is what users recognize.
