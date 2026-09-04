@@ -5,8 +5,7 @@
  * Subcommands:
  *   install <target> [--mode local|cloud|both] [--repo owner/name]
  *     Configure a target repo with .factory-daemon/ (config + start
- *     scripts). No source copy; the daemon + panel binaries come from
- *     this npm package.
+ *     scripts) and a factory/ runtime copy.
  *
  *   start [--panel] [--port 5174] [--interval 30]
  *     Run the local daemon. With --panel, starts the control panel in a
@@ -32,15 +31,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(__dirname, "..");
 
 const HELP = `Usage:
-  factory install <target> [--mode local|cloud|both] [--repo owner/name]
-  factory start [--panel] [--port 5174] [--interval 30]
-  factory panel [--port 5174]
+  factory install <target> [--mode local|cloud|both] [--repo owner/name] [--non-interactive]
+  factory start [--repo owner/name] [--panel] [--port 5174] [--interval 30]
+                [--once | --daily] [--local-dir path] [--workdir path]
+                [--state-dir path] [--env-file path] [--webhook-port 8080]
+                [--no-env-file] [--no-fallback-env]
+  factory panel [--port 5174] [--host 127.0.0.1] [--target path]
   factory uninstall <target>
   factory --help
 
 A target is the path to a git repo where you want the factory to run.
-The factory itself ships pre-built; nothing is copied into the target
-except thin config files under .factory-daemon/.
+Install copies the runtime into factory/ and preserves existing .env credentials.
+Run start from the target repo. --once processes at most one eligible issue;
+--daily runs only the review-feedback improvement stage.
 `;
 
 function parseArgs(argv) {
@@ -90,6 +93,7 @@ function spawnChild(cmd, args, opts = {}) {
         ...opts,
     });
     child.on("exit", (code) => process.exit(code ?? 0));
+    forwardSignals(child);
     return child;
 }
 
@@ -148,6 +152,8 @@ async function installCommand() {
     }
     const installerArgs = [target, "--mode", String(args.mode ?? "local")];
     if (args.repo) installerArgs.push("--repo", String(args.repo));
+    if (args["non-interactive"]) installerArgs.push("--non-interactive");
+    if (args["install-service"]) installerArgs.push("--install-service");
 
     const child = spawn(process.execPath, [installerPath, ...installerArgs], {
         stdio: "inherit",
@@ -165,11 +171,12 @@ async function startCommand() {
     // panel as a background child and print its URL when it's ready.
     const daemonScript = resolvePackagePath("scripts/factory-daemon.mjs");
     const daemonArgs = [];
-    if (args.interval) daemonArgs.push("--interval", String(args.interval));
-    if (args.localDir) daemonArgs.push("--local-dir", String(args.localDir));
-    if (args.webhookPort) daemonArgs.push("--webhook-port", String(args.webhookPort));
-    if (args.envFile) daemonArgs.push("--env-file", String(args.envFile));
-    if (args.stateDir) daemonArgs.push("--state-dir", String(args.stateDir));
+    for (const name of ["repo", "interval", "local-dir", "webhook-port", "env-file", "state-dir", "workdir"]) {
+        if (args[name] !== undefined) daemonArgs.push(`--${name}`, String(args[name]));
+    }
+    for (const name of ["once", "daily", "no-env-file", "no-fallback-env"]) {
+        if (args[name]) daemonArgs.push(`--${name}`);
+    }
 
     let panelChild = null;
     if (args.panel) {
@@ -192,7 +199,7 @@ async function startCommand() {
         panelChild.stderr?.on("data", (b) => process.stderr.write(`[panel] ${ b.toString() }`));
     }
 
-    const daemon = spawn(process.execPath, [daemonScript, ...daemonArgs], {
+    const daemon = spawn(process.execPath, ["--", daemonScript, ...daemonArgs], {
         stdio: "inherit",
     });
 
@@ -215,7 +222,11 @@ async function panelCommand() {
         process.stdout.write(HELP);
         return;
     }
-    spawnChild(process.execPath, [resolveBinPath("factory-panel.js")], {
+    const panelArgs = [];
+    for (const name of ["port", "host", "target"]) {
+        if (args[name] !== undefined) panelArgs.push(`--${name}`, String(args[name]));
+    }
+    spawnChild(process.execPath, [resolveBinPath("factory-panel.js"), ...panelArgs], {
         stdio: "inherit",
     });
 }

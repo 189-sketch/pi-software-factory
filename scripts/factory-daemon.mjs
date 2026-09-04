@@ -57,7 +57,7 @@ if (!SKIP_ENV_FILE) {
   }
 }
 
-const STATE_DIR = args.stateDir || process.env.FACTORY_STATE_DIR || path.join(process.cwd(), ".factory");
+const STATE_DIR = path.resolve(args.stateDir || process.env.FACTORY_STATE_DIR || path.join(process.cwd(), ".factory"));
 fsSync.mkdirSync(STATE_DIR, { recursive: true });
 
 /**
@@ -172,9 +172,9 @@ const FACTORY_GH_REPO = getEnv("FACTORY_GH_REPO", args.repo || "");
 const POLL_INTERVAL = Number(args.interval || process.env.FACTORY_POLL_INTERVAL || 30);
 const WEBHOOK_PORT = Number(args.webhookPort || process.env.FACTORY_WEBHOOK_PORT || 0);
 const LOCAL_DIR = args.localDir || process.env.FACTORY_LOCAL_DIR || "";
-const WORKDIR = args.workdir || process.env.FACTORY_WORKDIR || (LOCAL_DIR
+const WORKDIR = path.resolve(args.workdir || process.env.FACTORY_WORKDIR || (LOCAL_DIR
   ? path.join(process.cwd(), "factory-workdir")
-  : path.join(os.tmpdir(), "factory-workdir-" + Date.now()));
+  : path.join(os.tmpdir(), "factory-workdir-" + Date.now())));
 const DRY_RUN = args.dry || "";
 
 function parseArgs(argv) {
@@ -381,6 +381,9 @@ async function processIssue(issue, stage = "") {
   // Fresh git workdir per issue so concurrent runs don't collide.
   const issueWorkdir = path.join(WORKDIR, `issue-${issue.number}-${Date.now()}`);
   fsSync.mkdirSync(issueWorkdir, { recursive: true });
+  const sourceRoot = fsSync.existsSync(path.join(factoryRoot, "factory", "src"))
+    ? path.join(factoryRoot, "factory")
+    : factoryRoot;
 
   if (FACTORY_GH_REPO && GH_TOKEN) {
     // Clone the target repo so commit_and_push has somewhere to push.
@@ -397,7 +400,7 @@ async function processIssue(issue, stage = "") {
       // silently hangs on long paths). copyFactorySkeleton re-uses the
       // pre-installed node_modules via a symlink / directory junction.
       await copyFactorySkeleton(
-        path.join(factoryRoot, "factory"),
+        sourceRoot,
         path.join(issueWorkdir, "factory"),
       );
       log("INFO", "factory-skeleton-copied", { issue: issue.number, dst: issueWorkdir });
@@ -433,7 +436,7 @@ async function processIssue(issue, stage = "") {
     }
   } else {
     // No remote target — work directly from factoryRoot.
-    await copyFactorySkeleton(factoryRoot, path.join(issueWorkdir, "factory"));
+    await copyFactorySkeleton(sourceRoot, path.join(issueWorkdir, "factory"));
   }
 
   const env = {
@@ -450,7 +453,7 @@ async function processIssue(issue, stage = "") {
   // Pipeline runner: prefer the bundled orchestrator that ships in
   // this package's dist/ (no tsx, no source copy). Fall back to tsx on
   // source only when running from an unbuilt dev checkout.
-  const bundlePath = path.join(factoryRoot, "dist", "factory", "orchestrator.js");
+  const bundlePath = path.join(factoryRoot, "dist", "factory", "run-issue.js");
   const cliPath = path.join(issueWorkdir, "factory", "src", "cli", "run-issue.ts");
   const cliRoot = path.join(issueWorkdir, "factory");
   const tsxCandidates = [
@@ -460,14 +463,13 @@ async function processIssue(issue, stage = "") {
   ];
   const tsxCli = tsxCandidates.find((p) => fsSync.existsSync(p)) || tsxCandidates[0];
 
-  let runner, cliFile;
+  const runner = process.execPath;
+  let runnerArgs;
   if (fsSync.existsSync(bundlePath)) {
-    runner = process.execPath;
-    cliFile = bundlePath;
+    runnerArgs = [bundlePath];
     log("INFO", "starting-pipeline", { issue: issue.number, runner: "bundle", file: bundlePath });
   } else if (fsSync.existsSync(cliPath)) {
-    runner = "node";
-    cliFile = tsxCli;
+    runnerArgs = [tsxCli, cliPath];
     log("INFO", "starting-pipeline", { issue: issue.number, runner: "tsx", file: cliPath, tsx: tsxCli });
   } else {
     log("ERROR", "no-pipeline-runner", { bundlePath, cliPath, factoryRoot });
@@ -477,7 +479,7 @@ async function processIssue(issue, stage = "") {
   let stdout = "", stderr = "";
   const exitCode = await new Promise((resolve) => {
     const childArgs = [
-      cliFile,
+      ...runnerArgs,
       "--issue", issuePath,
     ];
     if (stage) childArgs.push("--stage", stage);
@@ -488,7 +490,8 @@ async function processIssue(issue, stage = "") {
       stderr += `failed to start pipeline: ${String(error)}\n`;
       resolve(1);
     });
-    child.on("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+    // Wait for the pipes to drain before parsing stdout or persisting stderr.
+    child.on("close", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
   });
 
   let summary = {};
@@ -507,7 +510,11 @@ async function processIssue(issue, stage = "") {
   };
   const stateName = stage ? `state-${stage}.json` : `state-${issue.number}.json`;
   fsSync.writeFileSync(path.join(STATE_DIR, stateName), JSON.stringify(stateRecord, null, 2));
-  log("INFO", "pipeline-done", { issue: issue.number, exitCode, summary });
+  if (exitCode === 0) {
+    log("INFO", "pipeline-done", { issue: issue.number, exitCode, summary });
+  } else {
+    log("ERROR", "pipeline-failed", { issue: issue.number, exitCode, summary, stderr: stderr.slice(-4_000) });
+  }
 
   // Bookkeeping: write the permanent processed-N marker only when the
   // pipeline actually succeeded (exitCode 0). Remove the transient
@@ -587,7 +594,7 @@ async function pollingLoop() {
           const verdict = review?.verdict ?? null;
           const comments = typeof review?.comments === "number" ? review.comments : null;
           const merged = Boolean(result?.summary?.merged);
-          log("INFO", "process-issue-end", {
+          log(result?.ok ? "INFO" : "ERROR", "process-issue-end", {
             issue: issue.number,
             ok: result?.ok,
             verdict,

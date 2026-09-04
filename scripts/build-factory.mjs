@@ -28,12 +28,15 @@ async function main() {
 
     // Bundle the orchestrator + every agent it depends on into one ESM file.
     await build({
-        entryPoints: [path.join(factoryRoot, "src", "orchestrator", "index.ts")],
+        entryPoints: {
+            orchestrator: path.join(factoryRoot, "src", "orchestrator", "index.ts"),
+            "run-issue": path.join(factoryRoot, "src", "cli", "run-issue.ts"),
+        },
         bundle: true,
         format: "esm",
         platform: "node",
         target: "node20",
-        outfile: path.join(outDir, "orchestrator.js"),
+        outdir: outDir,
         // Mark runtime packages as external — the daemon/CLI finds them
         // in the user's node_modules at install time. Playwright is
         // optional (only the verify-behavior agent needs it); if it's
